@@ -1,0 +1,6 @@
+procs:
+  mlflow:
+    cmd: ["docker", "compose", "--ansi", "always", "up", "--menu=false"]
+    stop: "SIGINT"
+  jupyter:
+    cmd: ["uv", "run", "jupyter", "notebook", "--no-browser", "--port=8888"]
