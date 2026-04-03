@@ -23,3 +23,7 @@ airflow/logs/
 
 # Environment files
 .env
+
+# Node.js
+node_modules/
+.next/

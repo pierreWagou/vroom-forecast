@@ -1,160 +1,37 @@
 """
 Vroom Forecast — Prediction Serving API
 
-Serves reservation count predictions from the champion model in MLflow.
-The model is loaded once at startup and cached in memory.
-
-Endpoints:
-    GET  /health           — liveness check + model info
-    POST /predict           — predict reservation count for one vehicle
-    POST /predict/batch     — predict for multiple vehicles
-    POST /benchmark         — run N predictions and report latency stats
+FastAPI application and route definitions. Model loading, feature engineering,
+and schemas live in their own modules.
 """
 
 from __future__ import annotations
 
-import logging
 import time
 from contextlib import asynccontextmanager
-from typing import Any
 
-import mlflow
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from fastapi.middleware.cors import CORSMiddleware
 
 from serving.config import settings
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-
-# ── Feature engineering (mirrors training/train.py) ──────────────────────────
-
-FEATURE_COLS = [
-    "technology",
-    "actual_price",
-    "recommended_price",
-    "num_images",
-    "street_parked",
-    "description",
-    "price_diff",
-    "price_ratio",
-]
-
-
-def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute derived pricing features — must match training logic."""
-    df = df.copy()
-    df["price_diff"] = df["actual_price"] - df["recommended_price"]
-    df["price_ratio"] = df["actual_price"] / df["recommended_price"]
-    return df
-
-
-# ── Pydantic schemas ─────────────────────────────────────────────────────────
-
-
-class VehicleFeatures(BaseModel):
-    """Raw vehicle attributes (before feature engineering)."""
-
-    technology: int = Field(..., ge=0, le=1, description="0=none, 1=installed")
-    actual_price: float = Field(..., gt=0, description="Daily price set by owner")
-    recommended_price: float = Field(..., gt=0, description="Market price")
-    num_images: int = Field(..., ge=0, description="Number of photos")
-    street_parked: int = Field(..., ge=0, le=1, description="0=no, 1=yes")
-    description: int = Field(..., ge=0, description="Character count of description")
-
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "technology": 1,
-                    "actual_price": 45.0,
-                    "recommended_price": 50.0,
-                    "num_images": 8,
-                    "street_parked": 0,
-                    "description": 250,
-                }
-            ]
-        }
-    }
-
-
-class PredictionResponse(BaseModel):
-    predicted_reservations: float
-    model_version: str
-
-
-class BatchPredictionResponse(BaseModel):
-    predictions: list[PredictionResponse]
-
-
-class BenchmarkRequest(BaseModel):
-    n_iterations: int = Field(default=1000, ge=1, le=100_000)
-    vehicle: VehicleFeatures
-
-
-class BenchmarkResponse(BaseModel):
-    n_iterations: int
-    avg_latency_ms: float
-    p50_latency_ms: float
-    p95_latency_ms: float
-    p99_latency_ms: float
-    model_version: str
-
-
-class HealthResponse(BaseModel):
-    status: str
-    model_name: str
-    model_version: str
-    mlflow_uri: str
-
-
-# ── Model loading ────────────────────────────────────────────────────────────
-
-_model: Any = None
-_model_version: str = ""
-
-
-def load_champion_model() -> tuple[Any, str]:
-    """Load the champion model from MLflow registry.
-
-    Artifacts are shared via a volume mount (/mlartifacts), so the model
-    can be loaded directly from disk after resolving the URI through
-    the tracking server.
-    """
-    mlflow.set_tracking_uri(settings.mlflow_uri)
-    client = mlflow.MlflowClient()
-
-    champion_mv = client.get_model_version_by_alias(settings.model_name, "champion")
-    version = champion_mv.version
-    model_uri = champion_mv.source
-
-    logger.info("Loading champion model: %s v%s from %s", settings.model_name, version, model_uri)
-    model = mlflow.sklearn.load_model(model_uri)
-    logger.info("Model loaded successfully.")
-    return model, version
-
-
-# ── Inference ────────────────────────────────────────────────────────────────
-
-
-def predict_single(vehicle: VehicleFeatures) -> float:
-    """Run inference for a single vehicle."""
-    df = pd.DataFrame([vehicle.model_dump()])
-    df = engineer_features(df)
-    prediction = _model.predict(df[FEATURE_COLS])
-    return float(prediction[0])
-
-
-# ── App lifecycle ────────────────────────────────────────────────────────────
+from serving.features import FEATURE_COLS, engineer_features
+from serving.model import get_model, get_model_version, load_champion, predict
+from serving.schemas import (
+    BatchPredictionResponse,
+    BenchmarkRequest,
+    BenchmarkResponse,
+    HealthResponse,
+    PredictionResponse,
+    VehicleFeatures,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
-    """Load the model on startup."""
-    global _model, _model_version  # noqa: PLW0603
-    _model, _model_version = load_champion_model()
+    """Load the champion model on startup."""
+    load_champion()
     yield
 
 
@@ -165,52 +42,56 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# ── Endpoints ────────────────────────────────────────────────────────────────
+
+# ── Routes ───────────────────────────────────────────────────────────────────
 
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     """Liveness check with model info."""
-    if _model is None:
+    if get_model() is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     return HealthResponse(
         status="ok",
         model_name=settings.model_name,
-        model_version=_model_version,
+        model_version=get_model_version(),
         mlflow_uri=settings.mlflow_uri,
     )
 
 
 @app.post("/predict", response_model=PredictionResponse)
-def predict(vehicle: VehicleFeatures) -> PredictionResponse:
+def predict_single(vehicle: VehicleFeatures) -> PredictionResponse:
     """Predict reservation count for a single vehicle."""
-    if _model is None:
+    if get_model() is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
-    prediction = predict_single(vehicle)
+    predictions = predict([vehicle])
     return PredictionResponse(
-        predicted_reservations=round(prediction, 2),
-        model_version=_model_version,
+        predicted_reservations=round(predictions[0], 2),
+        model_version=get_model_version(),
     )
 
 
 @app.post("/predict/batch", response_model=BatchPredictionResponse)
 def predict_batch(vehicles: list[VehicleFeatures]) -> BatchPredictionResponse:
     """Predict reservation counts for multiple vehicles."""
-    if _model is None:
+    if get_model() is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     if len(vehicles) > 1000:
         raise HTTPException(status_code=400, detail="Max 1000 vehicles per batch")
 
-    df = pd.DataFrame([v.model_dump() for v in vehicles])
-    df = engineer_features(df)
-    predictions = _model.predict(df[FEATURE_COLS])
-
+    predictions = predict(vehicles)
     return BatchPredictionResponse(
         predictions=[
             PredictionResponse(
-                predicted_reservations=round(float(p), 2),
-                model_version=_model_version,
+                predicted_reservations=round(p, 2),
+                model_version=get_model_version(),
             )
             for p in predictions
         ]
@@ -220,7 +101,8 @@ def predict_batch(vehicles: list[VehicleFeatures]) -> BatchPredictionResponse:
 @app.post("/benchmark", response_model=BenchmarkResponse)
 def benchmark(req: BenchmarkRequest) -> BenchmarkResponse:
     """Run N predictions and report latency statistics."""
-    if _model is None:
+    model = get_model()
+    if model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
     df = pd.DataFrame([req.vehicle.model_dump()])
@@ -230,7 +112,7 @@ def benchmark(req: BenchmarkRequest) -> BenchmarkResponse:
     latencies: list[float] = []
     for _ in range(req.n_iterations):
         start = time.perf_counter()
-        _model.predict(features)
+        model.predict(features)
         elapsed = (time.perf_counter() - start) * 1000  # ms
         latencies.append(elapsed)
 
@@ -241,5 +123,5 @@ def benchmark(req: BenchmarkRequest) -> BenchmarkResponse:
         p50_latency_ms=round(float(np.percentile(arr, 50)), 3),
         p95_latency_ms=round(float(np.percentile(arr, 95)), 3),
         p99_latency_ms=round(float(np.percentile(arr, 99)), 3),
-        model_version=_model_version,
+        model_version=get_model_version(),
     )

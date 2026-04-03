@@ -1,0 +1,59 @@
+"""Request and response schemas for the prediction API."""
+
+from pydantic import BaseModel, Field
+
+
+class VehicleFeatures(BaseModel):
+    """Raw vehicle attributes (before feature engineering)."""
+
+    technology: int = Field(..., ge=0, le=1, description="0=none, 1=installed")
+    actual_price: float = Field(..., gt=0, description="Daily price set by owner")
+    recommended_price: float = Field(..., gt=0, description="Market price")
+    num_images: int = Field(..., ge=0, description="Number of photos")
+    street_parked: int = Field(..., ge=0, le=1, description="0=no, 1=yes")
+    description: int = Field(..., ge=0, description="Character count of description")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "technology": 1,
+                    "actual_price": 45.0,
+                    "recommended_price": 50.0,
+                    "num_images": 8,
+                    "street_parked": 0,
+                    "description": 250,
+                }
+            ]
+        }
+    }
+
+
+class PredictionResponse(BaseModel):
+    predicted_reservations: float
+    model_version: str
+
+
+class BatchPredictionResponse(BaseModel):
+    predictions: list[PredictionResponse]
+
+
+class BenchmarkRequest(BaseModel):
+    n_iterations: int = Field(default=1000, ge=1, le=100_000)
+    vehicle: VehicleFeatures
+
+
+class BenchmarkResponse(BaseModel):
+    n_iterations: int
+    avg_latency_ms: float
+    p50_latency_ms: float
+    p95_latency_ms: float
+    p99_latency_ms: float
+    model_version: str
+
+
+class HealthResponse(BaseModel):
+    status: str
+    model_name: str
+    model_version: str
+    mlflow_uri: str

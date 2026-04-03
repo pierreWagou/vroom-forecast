@@ -13,8 +13,7 @@ services:
       --host 0.0.0.0
       --port 5000
       --backend-store-uri sqlite:///mlruns/mlflow.db
-      --artifacts-destination /mlartifacts
-      --serve-artifacts
+      --default-artifact-root /mlartifacts
       --allowed-hosts mlflow,mlflow:5000,localhost,localhost:5001
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/version')"]
@@ -53,8 +52,8 @@ services:
 
   serving:
     build:
-      context: serving
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: serving/Dockerfile
     depends_on:
       mlflow:
         condition: service_healthy

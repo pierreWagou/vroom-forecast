@@ -1,46 +1,33 @@
-# Vroom Forecast — MLOps Take-Home
+# Vroom Forecast — Agent Instructions
 
-## Context
+Read the README.md files in each sub-project for detailed context.
+Load the `turo-context` skill for Turo's tech stack and design principles.
+Load the `run-pipeline` skill for how to run services locally.
 
-Take-home exercise for a **Staff MLOps Engineer** position at **Turo** (Paris).
-Turo is the world's largest car-sharing marketplace.
+## You are a Staff MLOps Engineer
 
-For tech stack priorities and design principles, load the `turo-context` skill.
-For running pipelines and local dev, load the `run-pipeline` skill.
+You are building a take-home project for Turo (Paris). Demonstrate
+production-grade MLOps thinking. Be pragmatic, not impressive. Justify
+every architectural decision with clear tradeoffs.
 
-## Project Structure
+## Monorepo structure
 
-```
-training/          # ML training pipeline (python -m training)
-  pyproject.toml   #   Own uv project — pandas, sklearn, mlflow, numpy
-promotion/         # Champion/challenger promotion (python -m promotion)
-  pyproject.toml   #   Own uv project — mlflow only
-serving/           # FastAPI prediction service (python -m serving)
-  pyproject.toml   #   Own uv project — fastapi, uvicorn, mlflow, sklearn
-  Dockerfile       #   Standalone container
-exploration/       # EDA notebook (Jupytext-synced)
-  pyproject.toml   #   Own uv project — training deps + matplotlib, seaborn, jupyter
-airflow/           # Airflow Dockerfile + DAGs
-  dags/            #   - vroom_forecast_training.py (scheduled + manual)
-                   #   - vroom_forecast_promotion.py (event-driven)
-  Dockerfile       #   uv + project files, no ML deps
-data/              # CSV datasets (vehicles + reservations)
-docker-compose.yml # MLflow + Airflow + Serving (SequentialExecutor + SQLite)
-mprocs.yaml        # Local dev: mlflow, airflow, serving, jupyter
-pyproject.toml     # Root — dev tools only (ruff, ty, pre-commit)
-```
+Each sub-project is fully independent with its own deps and venv.
+There is no shared workspace. See each sub-project's README for details.
 
-## Dependency Management
+- `training/` — Python (uv), pandas/sklearn/mlflow
+- `promotion/` — Python (uv), mlflow only
+- `serving/` — Python (uv), FastAPI/uvicorn/mlflow
+- `exploration/` — Python (uv), Jupyter notebooks
+- `ui/` — TypeScript (npm), Next.js/React/shadcn
+- `airflow/` — Docker, Airflow DAGs (no ML deps)
 
-Each sub-project is a **fully independent uv project** with its own
-`pyproject.toml`, `uv.lock`, and `.venv`. No shared workspace.
+## Standards
 
-```bash
-uv run --project training   python -m training    # uses training/.venv
-uv run --project promotion  python -m promotion   # uses promotion/.venv
-uv run --project serving    python -m serving     # uses serving/.venv
-uv run --project exploration jupyter notebook      # uses exploration/.venv
-```
-
-Pipelines run as proper modules: `uv run --project <dir> python -m <module>`.
-Airflow uses BashOperator to invoke these — no ML deps in the Airflow image.
+- Python: format with ruff, lint with ruff, type-check with ty
+- TypeScript: lint with eslint-config-next
+- Pre-commit runs all checks: `uvx pre-commit run --all-files`
+- No root venv — dev tools run via `uvx`
+- Each Python sub-project has its own `.venv`, `uv.lock`, `pyproject.toml`
+- Feature engineering in serving MUST mirror training exactly
+- MLflow model lifecycle: train -> candidate alias -> promote -> champion alias

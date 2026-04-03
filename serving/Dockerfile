@@ -5,13 +5,12 @@ WORKDIR /app
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Copy project files
-COPY pyproject.toml uv.lock ./
+# Copy the serving sub-project (pyproject.toml, lock, source)
 COPY serving/ serving/
 
 # Install deps
-RUN uv sync
+RUN uv sync --project serving
 
 EXPOSE 8000
 
-CMD ["uv", "run", "python", "-m", "serving"]
+CMD ["uv", "run", "--project", "serving", "python", "-m", "serving"]
