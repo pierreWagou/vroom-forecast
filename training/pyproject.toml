@@ -1,0 +1,11 @@
+[project]
+name = "vroom-forecast-training"
+version = "0.1.0"
+description = "ML training pipeline for vroom-forecast"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=2.2",
+    "scikit-learn>=1.6",
+    "mlflow>=2.21",
+    "numpy>=2.2",
+]

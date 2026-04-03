@@ -2,16 +2,17 @@
 Vroom Forecast — Model Promotion
 
 Compares a candidate model version against the current champion and promotes
-it if it has a better cv_mae_mean.
+it if it has a better cv_mae_mean. The candidate can be specified by explicit
+version number or by MLflow alias (default: "candidate").
 
 Usage:
-    uv run python promote.py --version VERSION [--mlflow-uri URI] [--model-name NAME]
-                             [--metric METRIC]
+    uv run python -m promotion [--version VERSION | --candidate-alias ALIAS]
+                               [--mlflow-uri URI] [--model-name NAME]
+                               [--metric METRIC]
 """
 
 import argparse
 import logging
-import sys
 
 import mlflow
 
@@ -20,14 +21,30 @@ logger = logging.getLogger(__name__)
 
 MODEL_NAME = "vroom-forecast"
 CHAMPION_ALIAS = "champion"
+CANDIDATE_ALIAS = "candidate"
 COMPARISON_METRIC = "cv_mae_mean"  # lower is better
+
+
+def resolve_candidate_version(
+    client: mlflow.MlflowClient,
+    model_name: str,
+    version: str | None,
+    alias: str,
+) -> str:
+    """Return the candidate model version, either from an explicit arg or an alias."""
+    if version:
+        return version
+    mv = client.get_model_version_by_alias(model_name, alias)
+    logger.info("Resolved alias '%s' to version %s.", alias, mv.version)
+    return mv.version
 
 
 def promote(
     mlflow_uri: str,
     model_name: str,
-    candidate_version: str,
     metric_name: str,
+    candidate_version: str | None = None,
+    candidate_alias: str = CANDIDATE_ALIAS,
 ) -> bool:
     """Compare candidate against champion and promote if better.
 
@@ -36,15 +53,19 @@ def promote(
     mlflow.set_tracking_uri(mlflow_uri)
     client = mlflow.MlflowClient()
 
-    # Fetch candidate
-    candidate_mv = client.get_model_version(model_name, candidate_version)
+    # Resolve candidate
+    version = resolve_candidate_version(client, model_name, candidate_version, candidate_alias)
+
+    # Fetch candidate metrics
+    candidate_mv = client.get_model_version(model_name, version)
+    assert candidate_mv.run_id is not None, f"Model version {version} has no associated run"
     candidate_run = client.get_run(candidate_mv.run_id)
     candidate_metric = candidate_run.data.metrics.get(metric_name)
 
     if candidate_metric is None:
         logger.error(
             "Candidate v%s (run %s) has no metric '%s'. Cannot compare.",
-            candidate_version,
+            version,
             candidate_mv.run_id,
             metric_name,
         )
@@ -52,7 +73,7 @@ def promote(
 
     logger.info(
         "Candidate v%s: %s=%.4f",
-        candidate_version,
+        version,
         metric_name,
         candidate_metric,
     )
@@ -60,6 +81,7 @@ def promote(
     # Check if there is a current champion
     try:
         champion_mv = client.get_model_version_by_alias(model_name, CHAMPION_ALIAS)
+        assert champion_mv.run_id is not None, "Champion version has no associated run"
         champion_run = client.get_run(champion_mv.run_id)
         champion_metric = champion_run.data.metrics.get(metric_name)
 
@@ -69,10 +91,8 @@ def promote(
                 champion_mv.version,
                 metric_name,
             )
-            client.set_registered_model_alias(
-                model_name, CHAMPION_ALIAS, candidate_version
-            )
-            logger.info("Version %s promoted as champion.", candidate_version)
+            client.set_registered_model_alias(model_name, CHAMPION_ALIAS, version)
+            logger.info("Version %s promoted as champion.", version)
             return True
 
         logger.info(
@@ -83,12 +103,10 @@ def promote(
         )
 
         if candidate_metric < champion_metric:
-            client.set_registered_model_alias(
-                model_name, CHAMPION_ALIAS, candidate_version
-            )
+            client.set_registered_model_alias(model_name, CHAMPION_ALIAS, version)
             logger.info(
                 "New champion! Version %s promoted (%.4f < %.4f).",
-                candidate_version,
+                version,
                 candidate_metric,
                 champion_metric,
             )
@@ -104,10 +122,10 @@ def promote(
 
     except mlflow.exceptions.MlflowException:
         # No champion yet
-        client.set_registered_model_alias(model_name, CHAMPION_ALIAS, candidate_version)
+        client.set_registered_model_alias(model_name, CHAMPION_ALIAS, version)
         logger.info(
             "No existing champion. Version %s promoted as first champion.",
-            candidate_version,
+            version,
         )
         return True
 
@@ -117,8 +135,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--version",
         type=str,
-        required=True,
-        help="Model version to promote (e.g. '3')",
+        default=None,
+        help="Model version to evaluate (e.g. '3'). If omitted, uses --candidate-alias.",
+    )
+    parser.add_argument(
+        "--candidate-alias",
+        type=str,
+        default=CANDIDATE_ALIAS,
+        help="MLflow alias to resolve the candidate version (default: 'candidate')",
     )
     parser.add_argument(
         "--mlflow-uri",
@@ -139,14 +163,3 @@ def parse_args() -> argparse.Namespace:
         help="Metric to compare (lower is better)",
     )
     return parser.parse_args()
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    promoted = promote(
-        mlflow_uri=args.mlflow_uri,
-        model_name=args.model_name,
-        candidate_version=args.version,
-        metric_name=args.metric,
-    )
-    sys.exit(0 if promoted else 1)

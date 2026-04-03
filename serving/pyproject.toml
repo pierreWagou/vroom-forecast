@@ -1,0 +1,14 @@
+[project]
+name = "vroom-forecast-serving"
+version = "0.1.0"
+description = "FastAPI prediction service for vroom-forecast"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "pydantic-settings>=2.7",
+    "mlflow>=2.21",
+    "scikit-learn>=1.6",
+    "pandas>=2.2",
+    "numpy>=2.2",
+]

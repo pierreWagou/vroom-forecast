@@ -33,12 +33,12 @@
 # ## 1. Imports
 
 # %%
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import mlflow
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import mlflow
+import pandas as pd
+import seaborn as sns
 
 sns.set_theme(style="whitegrid")
 pd.set_option("display.max_columns", None)
@@ -92,9 +92,7 @@ reservations["created_at"].describe()
 
 # %%
 # Count reservations per vehicle
-res_counts = (
-    reservations.groupby("vehicle_id").size().reset_index(name="num_reservations")
-)
+res_counts = reservations.groupby("vehicle_id").size().reset_index(name="num_reservations")
 print(f"Vehicles with at least 1 reservation: {len(res_counts)}")
 res_counts.describe()
 
@@ -149,9 +147,7 @@ feature_cols = [
 fig, axes = plt.subplots(2, 3, figsize=(15, 8))
 for ax, col in zip(axes.ravel(), feature_cols):
     if df[col].nunique() <= 5:
-        df[col].value_counts().sort_index().plot.bar(
-            ax=ax, edgecolor="black", alpha=0.7
-        )
+        df[col].value_counts().sort_index().plot.bar(ax=ax, edgecolor="black", alpha=0.7)
     else:
         ax.hist(df[col].dropna(), bins=30, edgecolor="black", alpha=0.7)
     ax.set_title(col)
@@ -248,9 +244,9 @@ plt.show()
 # extract feature importances, and log everything to MLflow.
 
 # %%
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 from sklearn.model_selection import cross_val_score
-from sklearn.metrics import mean_absolute_error, root_mean_squared_error, r2_score
 
 # Prepare features
 feature_cols_model = [
@@ -302,9 +298,9 @@ with mlflow.start_run(run_name="random_forest"):
     mlflow.log_metric("train_r2", r2_score(y, rf_preds))
 
     # Log feature importances
-    rf_importances = pd.Series(
-        rf.feature_importances_, index=feature_cols_model
-    ).sort_values(ascending=True)
+    rf_importances = pd.Series(rf.feature_importances_, index=feature_cols_model).sort_values(
+        ascending=True
+    )
     for feat, imp in rf_importances.items():
         mlflow.log_metric(f"importance_{feat}", imp)
 
@@ -353,9 +349,9 @@ with mlflow.start_run(run_name="gradient_boosting"):
     mlflow.log_metric("train_r2", r2_score(y, gb_preds))
 
     # Log feature importances
-    gb_importances = pd.Series(
-        gb.feature_importances_, index=feature_cols_model
-    ).sort_values(ascending=True)
+    gb_importances = pd.Series(gb.feature_importances_, index=feature_cols_model).sort_values(
+        ascending=True
+    )
     for feat, imp in gb_importances.items():
         mlflow.log_metric(f"importance_{feat}", imp)
 
@@ -398,14 +394,12 @@ plt.show()
 from sklearn.inspection import permutation_importance
 
 perm_result = permutation_importance(rf, X, y, n_repeats=10, random_state=42, n_jobs=-1)
-perm_importances = pd.Series(
-    perm_result.importances_mean, index=feature_cols_model
-).sort_values(ascending=True)
+perm_importances = pd.Series(perm_result.importances_mean, index=feature_cols_model).sort_values(
+    ascending=True
+)
 
 fig, ax = plt.subplots(figsize=(8, 5))
-perm_importances.plot.barh(
-    ax=ax, edgecolor="black", alpha=0.7, xerr=perm_result.importances_std
-)
+perm_importances.plot.barh(ax=ax, edgecolor="black", alpha=0.7, xerr=perm_result.importances_std)
 ax.set_title("Permutation Importance (Random Forest)")
 ax.set_xlabel("Mean decrease in score")
 plt.tight_layout()

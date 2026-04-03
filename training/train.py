@@ -59,7 +59,9 @@ def load_data(data_dir: Path) -> pd.DataFrame:
     reservations = pd.read_csv(reservations_path, parse_dates=["created_at"])
     logger.info("Reservations shape: %s", reservations.shape)
 
-    res_counts = reservations.groupby("vehicle_id").size().reset_index(name=TARGET_COL)
+    res_counts: pd.DataFrame = (
+        reservations.groupby("vehicle_id").size().reset_index(name=TARGET_COL)  # ty: ignore[no-matching-overload]  # pandas stub limitation
+    )
 
     df = vehicles.merge(res_counts, on="vehicle_id", how="left")
     df[TARGET_COL] = df[TARGET_COL].fillna(0).astype(int)
@@ -90,9 +92,7 @@ def train_and_evaluate(
     model = RandomForestRegressor(**params)
 
     logger.info("Running %d-fold cross-validation...", cv_folds)
-    cv_scores = cross_val_score(
-        model, X, y, cv=cv_folds, scoring="neg_mean_absolute_error"
-    )
+    cv_scores = cross_val_score(model, X, y, cv=cv_folds, scoring="neg_mean_absolute_error")
     cv_mae = -cv_scores.mean()
     cv_std = cv_scores.std()
     logger.info("CV MAE: %.3f (+/- %.3f)", cv_mae, cv_std)
@@ -110,14 +110,14 @@ def train_and_evaluate(
     }
 
     # Per-feature importances
-    for feat, imp in zip(X.columns, model.feature_importances_):
+    for feat, imp in zip(X.columns, model.feature_importances_, strict=True):
         metrics[f"importance_{feat}"] = imp
 
     return model, metrics
 
 
 def register_model(run_id: str, model_name: str) -> str:
-    """Register a new model version in MLflow and return its version number."""
+    """Register a new model version in MLflow, tag it as 'candidate', and return its version."""
     client = mlflow.MlflowClient()
     model_uri = f"runs:/{run_id}/model"
 
@@ -130,11 +130,18 @@ def register_model(run_id: str, model_name: str) -> str:
 
     mv = client.create_model_version(name=model_name, source=model_uri, run_id=run_id)
     logger.info("Registered model version %s for '%s'.", mv.version, model_name)
+
+    client.set_registered_model_alias(model_name, "candidate", mv.version)
+    logger.info("Alias 'candidate' set on version %s.", mv.version)
+
     return mv.version
 
 
-def run(data_dir: Path, mlflow_uri: str, experiment_name: str, model_name: str) -> None:
-    """Full training pipeline."""
+def run(data_dir: Path, mlflow_uri: str, experiment_name: str, model_name: str) -> str:
+    """Full training pipeline.
+
+    Returns the registered model version string.
+    """
     mlflow.set_tracking_uri(mlflow_uri)
     mlflow.set_experiment(experiment_name)
     logger.info("MLflow tracking URI: %s", mlflow_uri)
@@ -158,17 +165,18 @@ def run(data_dir: Path, mlflow_uri: str, experiment_name: str, model_name: str) 
 
         mlflow.sklearn.log_model(model, artifact_path="model", input_example=X.head(1))
 
-        run_id = mlflow.active_run().info.run_id
+        run_id = mlflow.active_run()
+        assert run_id is not None, "No active MLflow run"
+        run_id = run_id.info.run_id
         logger.info("Run ID: %s", run_id)
 
     version = register_model(run_id, model_name)
     logger.info(
-        "Done. Model registered as %s v%s. "
-        "Run: uv run python promote.py --version %s  to promote it.",
+        "Done. Model registered as %s v%s (alias: candidate).",
         model_name,
         version,
-        version,
     )
+    return version
 
 
 def parse_args() -> argparse.Namespace:
@@ -198,13 +206,3 @@ def parse_args() -> argparse.Namespace:
         help="Registered model name in MLflow",
     )
     return parser.parse_args()
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    run(
-        data_dir=args.data_dir,
-        mlflow_uri=args.mlflow_uri,
-        experiment_name=args.experiment,
-        model_name=args.model_name,
-    )

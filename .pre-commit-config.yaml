@@ -1,0 +1,33 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.9
+    hooks:
+      - id: ruff-format
+      - id: ruff-check
+        args: [--fix]
+
+  - repo: local
+    hooks:
+      - id: ty-training
+        name: ty (training)
+        entry: uvx ty check --python training/.venv training/
+        language: system
+        files: ^training/
+        types: [python]
+        pass_filenames: false
+
+      - id: ty-promotion
+        name: ty (promotion)
+        entry: uvx ty check --python promotion/.venv promotion/
+        language: system
+        files: ^promotion/
+        types: [python]
+        pass_filenames: false
+
+      - id: ty-serving
+        name: ty (serving)
+        entry: uvx ty check --python serving/.venv serving/
+        language: system
+        files: ^serving/
+        types: [python]
+        pass_filenames: false

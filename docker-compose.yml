@@ -14,3 +14,60 @@ services:
       --port 5000
       --backend-store-uri sqlite:///mlruns/mlflow.db
       --artifacts-destination /mlartifacts
+      --serve-artifacts
+      --allowed-hosts mlflow,mlflow:5000,localhost,localhost:5001
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/version')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  airflow:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
+      - AIRFLOW__CORE__FERNET_KEY=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+      - AIRFLOW__WEBSERVER__SECRET_KEY=vroom-forecast-dev-key
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./training:/opt/airflow/training
+      - ./promotion:/opt/airflow/promotion
+      - ./data:/opt/airflow/data:ro
+      - ./mlartifacts:/mlartifacts
+    command: >
+      bash -c "airflow db migrate
+      && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com
+      && echo admin > /opt/airflow/standalone_admin_password.txt
+      && airflow standalone"
+
+  serving:
+    build:
+      context: serving
+      dockerfile: Dockerfile
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      - SERVING_MLFLOW_URI=http://mlflow:5000
+      - SERVING_MODEL_NAME=vroom-forecast
+    volumes:
+      - ./mlartifacts:/mlartifacts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
