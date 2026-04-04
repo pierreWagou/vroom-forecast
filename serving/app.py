@@ -88,13 +88,17 @@ class VroomForecastApp:
         )
 
     @app.post("/vehicles", response_model=SaveVehicleResponse)
-    def save_vehicle_endpoint(self, vehicle: VehicleFeatures) -> SaveVehicleResponse:
-        vehicle_id = save_vehicle(vehicle)
+    async def save_vehicle_endpoint(self, vehicle: VehicleFeatures) -> SaveVehicleResponse:
+        import asyncio
+
+        vehicle_id = await asyncio.to_thread(save_vehicle, vehicle)
         return SaveVehicleResponse(vehicle_id=vehicle_id, status="saved")
 
     @app.get("/vehicles", response_model=list[VehicleRecord])
-    def list_vehicles_endpoint(self) -> list[VehicleRecord]:
-        return list_vehicles()
+    async def list_vehicles_endpoint(self) -> list[VehicleRecord]:
+        import asyncio
+
+        return await asyncio.to_thread(list_vehicles)
 
     @app.get("/vehicles/{vehicle_id}/features", response_model=ComputedFeatures)
     async def get_vehicle_features(self, vehicle_id: int) -> ComputedFeatures:
@@ -103,9 +107,7 @@ class VroomForecastApp:
         if not feast_online:
             return ComputedFeatures(vehicle_id=vehicle_id, materialized=False)
         try:
-            # Saved vehicles are offset by 100_000 in the feature store
-            fs_id = vehicle_id + 100_000
-            df = await self.feature_lookup.lookup.remote([fs_id])
+            df = await self.feature_lookup.lookup.remote([vehicle_id])
             row = df.iloc[0]
             # Check if Feast returned nulls (vehicle not materialized)
             if pd.isna(row.get("technology")):
@@ -141,6 +143,11 @@ class VroomForecastApp:
         if not feast_online:
             raise HTTPException(status_code=503, detail="Feature store not configured")
         features_df = await self.feature_lookup.lookup.remote([req.vehicle_id])
+        if features_df.isna().any().any():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Vehicle {req.vehicle_id} not found in the online store",
+            )
         predictions = await self.predictor.predict.remote(features_df)
         version = await self.predictor.get_version.remote()
         return PredictionResponse(

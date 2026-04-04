@@ -2,6 +2,16 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
+  Car,
+  DollarSign,
+  Image,
+  Loader2,
+  Monitor,
+  RefreshCw,
+  Save,
+  Settings,
+} from "lucide-react";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -155,7 +165,7 @@ export default function Home() {
       200
     );
     try {
-      const result = await benchmarkById(materialized.vehicle_id + 100_000, 1000);
+      const result = await benchmarkById(materialized.vehicle_id, 1000);
       setBenchmarkStoreResult(result);
       setBenchStoreProgress(100);
     } catch (e) {
@@ -191,8 +201,7 @@ export default function Home() {
   const handlePredictById = async (vehicleId: number) => {
     setError(null);
     try {
-      // User-saved vehicles are offset by 100_000 in the feature store
-      const result = await predictById(vehicleId + 100_000);
+      const result = await predictById(vehicleId);
       setVehiclePredictions((prev) => ({ ...prev, [vehicleId]: result }));
     } catch (e) {
       setError(
@@ -209,7 +218,7 @@ export default function Home() {
     setError(null);
     for (const v of savedVehicles) {
       try {
-        const result = await predictById(v.vehicle_id + 100_000);
+        const result = await predictById(v.vehicle_id);
         setVehiclePredictions((prev) => ({ ...prev, [v.vehicle_id]: result }));
       } catch {
         // Skip vehicles not yet materialized
@@ -281,19 +290,7 @@ export default function Home() {
             <div>
               <div className="mb-2 flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-5 w-5"
-                  >
-                    <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-2-2.2-3.3C12.4 5 10.5 4 8.8 4H6.4c-1.1 0-2.1.6-2.7 1.4L2 8H1v2h1l.7 1H1v2h1v3c0 .6.4 1 1 1h2" />
-                    <circle cx="7" cy="17" r="2" />
-                    <circle cx="17" cy="17" r="2" />
-                  </svg>
+                  <Car className="h-5 w-5" />
                 </div>
                 <h1 className="text-3xl font-bold tracking-tight">
                   Vroom Forecast
@@ -338,18 +335,7 @@ export default function Home() {
                     }}
                     className={`flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors ${reloading || !health ? "opacity-50 cursor-not-allowed" : "hover:bg-white/25 cursor-pointer"}`}
                   >
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className={`h-4 w-4 ${reloading ? "animate-spin" : ""}`}
-                    >
-                      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
-                      <path d="M21 3v5h-5" />
-                    </svg>
+                    <RefreshCw className={`h-4 w-4 ${reloading ? "animate-spin" : ""}`} />
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
@@ -406,18 +392,7 @@ export default function Home() {
                   {/* Pricing section */}
                   <div className="rounded-xl bg-muted/50 p-4 space-y-4">
                     <div className="flex items-center gap-2">
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="h-4 w-4 text-primary"
-                      >
-                        <line x1="12" y1="1" x2="12" y2="23" />
-                        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                      </svg>
+                      <DollarSign className="h-4 w-4 text-primary" />
                       <h3 className="text-sm font-semibold">Pricing</h3>
                     </div>
                     <div className="grid gap-4 sm:grid-cols-2">
@@ -486,19 +461,7 @@ export default function Home() {
                   {/* Listing quality section */}
                   <div className="space-y-5">
                     <div className="flex items-center gap-2">
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="h-4 w-4 text-primary"
-                      >
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                        <circle cx="9" cy="9" r="2" />
-                        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                      </svg>
+                      <Image className="h-4 w-4 text-primary" />
                       <h3 className="text-sm font-semibold">Listing Quality</h3>
                     </div>
 
@@ -552,18 +515,7 @@ export default function Home() {
                   {/* Toggles */}
                   <div className="space-y-4">
                     <div className="flex items-center gap-2">
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="h-4 w-4 text-primary"
-                      >
-                        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
+                      <Settings className="h-4 w-4 text-primary" />
                       <h3 className="text-sm font-semibold">Vehicle Details</h3>
                     </div>
 
@@ -613,22 +565,7 @@ export default function Home() {
                     >
                       {loading ? (
                         <span className="flex items-center gap-2">
-                          <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                            <circle
-                              className="opacity-25"
-                              cx="12"
-                              cy="12"
-                              r="10"
-                              stroke="currentColor"
-                              strokeWidth="4"
-                              fill="none"
-                            />
-                            <path
-                              className="opacity-75"
-                              fill="currentColor"
-                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                            />
-                          </svg>
+                          <Loader2 className="h-4 w-4 animate-spin" />
                           Predicting...
                         </span>
                       ) : (
@@ -646,19 +583,7 @@ export default function Home() {
                           }}
                           className={`flex h-11 w-11 items-center justify-center rounded-full border ${saving || !health ? "opacity-50 cursor-not-allowed" : "hover:bg-muted cursor-pointer"}`}
                         >
-                          <svg
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            className={`h-5 w-5 ${saving ? "animate-pulse" : ""}`}
-                          >
-                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                            <polyline points="17 21 17 13 7 13 7 21" />
-                            <polyline points="7 3 7 8 15 8" />
-                          </svg>
+                          <Save className={`h-5 w-5 ${saving ? "animate-pulse" : ""}`} />
                         </div>
                       </TooltipTrigger>
                       <TooltipContent>Save to fleet</TooltipContent>
@@ -686,16 +611,7 @@ export default function Home() {
                     ) : (
                       <div className="text-center py-4">
                         <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-                          <svg
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            className="h-8 w-8 text-muted-foreground/50"
-                          >
-                            <path d="M9 17H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-4" />
-                            <path d="m12 15 5 6H7z" />
-                          </svg>
+                          <Monitor className="h-8 w-8 text-muted-foreground/50" />
                         </div>
                         <p className="text-sm text-muted-foreground">
                           Configure your vehicle and click predict
@@ -969,7 +885,7 @@ export default function Home() {
                     <CardDescription>
                       Saved vehicles with predictions from the online feature store.
                       Save vehicles from the Predict tab using the
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="inline h-3.5 w-3.5 mx-1 -mt-0.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>
+                      <Save className="inline h-3.5 w-3.5 mx-1 -mt-0.5" />
                       button.
                     </CardDescription>
                   </div>
@@ -999,11 +915,7 @@ export default function Home() {
                 {savedVehicles.length === 0 ? (
                   <div className="text-center py-12">
                     <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-8 w-8 text-muted-foreground/50">
-                        <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-2-2.2-3.3C12.4 5 10.5 4 8.8 4H6.4c-1.1 0-2.1.6-2.7 1.4L2 8H1v2h1l.7 1H1v2h1v3c0 .6.4 1 1 1h2" />
-                        <circle cx="7" cy="17" r="2" />
-                        <circle cx="17" cy="17" r="2" />
-                      </svg>
+                      <Car className="h-8 w-8 text-muted-foreground/50" />
                     </div>
                     <p className="text-sm text-muted-foreground">
                       No vehicles in your fleet yet.

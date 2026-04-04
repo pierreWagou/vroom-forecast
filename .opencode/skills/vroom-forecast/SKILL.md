@@ -14,7 +14,7 @@ Two datasets are available in `data/`:
 - `actual_price`: daily price set by the owner
 - `recommended_price`: market price based on internal analysis
 - `num_images`: number of photos uploaded by the owner
-- `street_parking`: 0 = no, 1 = yes
+- `street_parked`: 0 = no, 1 = yes
 - `description`: number of characters in the owner's description
 
 **`reservations.csv`** — all completed reservations:

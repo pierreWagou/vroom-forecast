@@ -145,7 +145,43 @@ class FeatureLookup:
 
 
 VEHICLE_SAVED_CHANNEL = "vroom-forecast:vehicle-saved"
-VEHICLE_ID_OFFSET = 100_000
+MODEL_PROMOTED_CHANNEL = "vroom-forecast:model-promoted"
+
+
+@ray.remote
+class ModelReloadListener:
+    """Ray actor that subscribes to Redis pub/sub and reloads the Predictor
+    when a model promotion event is received.
+
+    This bridges the promotion pipeline → serving: promotion publishes to
+    `model-promoted` channel, this actor calls Predictor.reload().
+    """
+
+    def __init__(self, predictor_handle: Any) -> None:
+        self._predictor = predictor_handle
+
+    def run(self) -> None:
+        """Subscribe to Redis and reload the model on promotion events."""
+        if settings.redis_url is None:
+            print("[ModelReloadListener] No Redis URL — exiting.", flush=True)
+            return
+
+        import redis
+
+        r = redis.from_url(settings.redis_url)
+        pubsub = r.pubsub()
+        pubsub.subscribe(MODEL_PROMOTED_CHANNEL)
+        print(f"[ModelReloadListener] Subscribed to '{MODEL_PROMOTED_CHANNEL}'.", flush=True)
+
+        for message in pubsub.listen():
+            if message["type"] != "message":
+                continue
+            try:
+                print(f"[ModelReloadListener] Got promotion event: {message['data']}", flush=True)
+                ray.get(self._predictor.reload.remote())
+                print("[ModelReloadListener] Model reloaded.", flush=True)
+            except Exception as e:
+                print(f"[ModelReloadListener] Reload failed: {e}", flush=True)
 
 
 @ray.remote
@@ -202,10 +238,11 @@ class FeatureMaterializer:
             )
             return
 
+        rec = raw["recommended_price"]
         features = {
             **raw,
-            "price_diff": raw["actual_price"] - raw["recommended_price"],
-            "price_ratio": raw["actual_price"] / raw["recommended_price"],
+            "price_diff": raw["actual_price"] - rec,
+            "price_ratio": raw["actual_price"] / rec if rec != 0 else float("nan"),
         }
 
         row = {
@@ -224,9 +261,8 @@ class FeatureMaterializer:
 
         df = pd.DataFrame([row])
         self._store.write_to_online_store("vehicle_features", df)
-        db_id = vehicle_id - VEHICLE_ID_OFFSET
         print(
-            f"[FeatureMaterializer] Materialized DB#{db_id} -> FS#{vehicle_id}",
+            f"[FeatureMaterializer] Materialized vehicle #{vehicle_id}",
             flush=True,
         )
 
@@ -249,8 +285,7 @@ class FeatureMaterializer:
             try:
                 print(f"[FeatureMaterializer] Got event: {message['data']}", flush=True)
                 raw = json.loads(message["data"])
-                db_id = raw.pop("vehicle_id")
-                feature_store_id = db_id + VEHICLE_ID_OFFSET
-                self._compute_and_write(feature_store_id, raw)
+                vehicle_id = raw.pop("vehicle_id")
+                self._compute_and_write(vehicle_id, raw)
             except Exception as e:
                 print(f"[FeatureMaterializer] Error: {e}", flush=True)

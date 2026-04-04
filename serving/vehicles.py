@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from datetime import UTC, datetime
 from pathlib import Path
 
 from serving.config import settings
@@ -18,10 +17,12 @@ VEHICLE_SAVED_CHANNEL = "vroom-forecast:vehicle-saved"
 
 
 def _get_db() -> sqlite3.Connection:
-    """Get a connection to the vehicle database, creating the table if needed."""
+    """Get a connection to the shared vehicle database."""
     path = Path(DB_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
+    conn.execute("PRAGMA journal_mode=WAL")  # safe concurrent reads/writes
+    # Table is created by features/seed.py — but ensure it exists
     conn.execute("""
         CREATE TABLE IF NOT EXISTS vehicles (
             vehicle_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,24 +32,24 @@ def _get_db() -> sqlite3.Connection:
             num_images INTEGER NOT NULL,
             street_parked INTEGER NOT NULL,
             description INTEGER NOT NULL,
-            created_at TEXT NOT NULL
+            source TEXT NOT NULL DEFAULT 'ui'
         )
     """)
     return conn
 
 
 def save_vehicle(vehicle: VehicleFeatures) -> int:
-    """Save a vehicle's raw attributes to SQLite and emit an event.
+    """Save a vehicle to the shared database and emit an event.
 
-    Returns the assigned vehicle_id. A feature worker listening on Redis
-    pub/sub will compute and materialize features to the online store.
+    Returns the assigned vehicle_id. The FeatureMaterializer Ray actor
+    will compute and materialize features to the online store.
     """
     conn = _get_db()
     cursor = conn.execute(
         """
         INSERT INTO vehicles (technology, actual_price, recommended_price,
-                              num_images, street_parked, description, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+                              num_images, street_parked, description, source)
+        VALUES (?, ?, ?, ?, ?, ?, 'ui')
         """,
         (
             vehicle.technology,
@@ -57,7 +58,6 @@ def save_vehicle(vehicle: VehicleFeatures) -> int:
             vehicle.num_images,
             vehicle.street_parked,
             vehicle.description,
-            datetime.now(tz=UTC).isoformat(),
         ),
     )
     conn.commit()
@@ -102,7 +102,7 @@ def _emit_vehicle_saved(vehicle_id: int, vehicle: VehicleFeatures) -> None:
 
 
 def list_vehicles() -> list[VehicleRecord]:
-    """List all saved vehicles."""
+    """List all vehicles (both CSV-seeded and user-saved)."""
     conn = _get_db()
     rows = conn.execute(
         "SELECT vehicle_id, technology, actual_price, recommended_price, "

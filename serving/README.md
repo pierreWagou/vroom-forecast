@@ -4,6 +4,27 @@ Ray Serve prediction service for vroom-forecast. FastAPI ingress with
 Ray Serve deployments for model inference, feature computation, and
 online store lookup.
 
+## Architecture
+
+```mermaid
+graph TB
+    subgraph Ray Serve
+        ING[VroomForecastApp<br/>FastAPI ingress]
+        FC[FeatureComputer]
+        FL[FeatureLookup]
+        PRED[Predictor]
+        MAT[FeatureMaterializer<br/>Ray actor]
+    end
+
+    Client -->|HTTP| ING
+    ING -->|/predict| FC -->|DataFrame| PRED
+    ING -->|/predict/id| FL -->|DataFrame| PRED
+    ING -->|/vehicles POST| DB[(SQLite)]
+    DB -->|Redis pub/sub| MAT -->|write_to_online_store| Redis[(Redis)]
+    Redis --> FL
+    MLflow[(MLflow)] -->|load champion| PRED
+```
+
 ## Running
 
 ```bash
@@ -26,34 +47,10 @@ docker compose up serving    # port 8000 + Ray dashboard on 8265
 | POST | `/benchmark` | Latency benchmark: on-the-fly features + inference |
 | POST | `/benchmark/id` | Latency benchmark: online store lookup + inference |
 | POST | `/vehicles` | Save a vehicle to SQLite (emits Redis event for materialization) |
-| GET | `/vehicles` | List all saved vehicles |
+| GET | `/vehicles` | List all vehicles |
 | GET | `/vehicles/{id}/features` | Get computed features from online store |
 
 Interactive docs at `http://localhost:8000/docs`.
-
-## Architecture
-
-```
-Ray Serve (single container)
-├── VroomForecastApp     FastAPI ingress — all HTTP routes
-├── Predictor            Loads champion model from MLflow, runs inference
-├── FeatureComputer      Computes price_diff, price_ratio on the fly
-├── FeatureLookup        Reads from Feast online store (Redis)
-└── FeatureMaterializer  Ray actor — subscribes to Redis pub/sub, writes to Feast
-```
-
-### Files
-
-```
-app.py        — Ray Serve ingress + FastAPI routes
-config.py     — Settings from env vars (SERVING_* prefix)
-schemas.py    — Pydantic request/response models
-features.py   — Feature engineering (mirrors training logic)
-model.py      — Ray Serve deployments + FeatureMaterializer actor
-vehicles.py   — SQLite persistence + Redis pub/sub event emission
-__main__.py   — Entry point (ray.init + serve.run)
-Dockerfile    — Standalone container
-```
 
 ## Configuration
 

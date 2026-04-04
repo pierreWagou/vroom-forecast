@@ -1,11 +1,19 @@
 """Run the serving API via Ray Serve: python -m serving."""
 
+import time
+
 import ray
 from ray import serve
 
 from serving.app import VroomForecastApp
 from serving.config import settings
-from serving.model import FeatureComputer, FeatureLookup, FeatureMaterializer, Predictor
+from serving.model import (
+    FeatureComputer,
+    FeatureLookup,
+    FeatureMaterializer,
+    ModelReloadListener,
+    Predictor,
+)
 
 
 def main() -> None:
@@ -25,19 +33,25 @@ def main() -> None:
 
     serve.run(ingress, name="vroom-forecast")
 
-    # Start the background feature materializer actor
-    # This is a Ray actor (not a Serve deployment) — it subscribes to Redis
-    # pub/sub and writes to the Feast online store when vehicles are saved.
+    # Get a handle to the Predictor for the reload listener
+    predictor_handle = serve.get_app_handle("vroom-forecast")
+
+    # Start background Ray actors (not Serve deployments — they don't handle HTTP)
+    # 1. Feature materializer: subscribes to vehicle-saved events, writes to Feast
     materializer = FeatureMaterializer.remote()
-    materializer.run.remote()  # fire-and-forget: runs forever in the background
+    materializer.run.remote()
+
+    # 2. Model reload listener: subscribes to model-promoted events, reloads Predictor
+    reload_listener = ModelReloadListener.remote(predictor_handle)
+    reload_listener.run.remote()
 
     print(f"Ray Serve running at http://{settings.host}:{settings.port}")
     print(f"Ray dashboard at http://{settings.host}:8265")
 
+    # Block until interrupted (cross-platform)
     try:
-        import signal
-
-        signal.pause()
+        while True:
+            time.sleep(3600)
     except KeyboardInterrupt:
         print("Shutting down...")
         serve.shutdown()

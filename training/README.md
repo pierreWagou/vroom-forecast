@@ -3,26 +3,42 @@
 Independent uv project that trains a RandomForest model to predict vehicle
 reservation counts from listing attributes.
 
+## Data Flow
+
+```mermaid
+graph LR
+    PQ[Parquet<br/>offline store] -->|--feature-store| Train
+    CSV[data/*.csv] -->|--data-dir<br/>fallback| Train
+    Train -->|log metrics + model| MLflow[(MLflow)]
+    Train -->|set candidate alias| MLflow
+```
+
 ## Running
 
 ```bash
-uv run --project training python -m training --data-dir data --mlflow-uri http://localhost:5001
+# From the offline feature store (preferred — uses materialized features):
+uv run --project training python -m training \
+    --feature-store /feast-data/vehicle_features.parquet \
+    --mlflow-uri http://localhost:5001
+
+# From raw CSVs (fallback — computes features locally):
+uv run --project training python -m training \
+    --data-dir data \
+    --mlflow-uri http://localhost:5001
 ```
 
 ## What it does
 
-1. Loads `data/vehicles.csv` + `data/reservations.csv`
-2. Aggregates reservation counts per vehicle
-3. Engineers features: `price_diff`, `price_ratio`
-4. Trains `RandomForestRegressor` (200 trees, max_depth=10) with 5-fold CV
-5. Logs params, metrics, and model artifact to MLflow
-6. Registers the model version and sets the `candidate` alias
+1. Loads features from the offline store (Parquet) or raw CSVs (fallback)
+2. Trains a `RandomForestRegressor` (200 trees, max_depth=10) with 5-fold CV
+3. Logs params, metrics, and model artifact to MLflow
+4. Registers the model version and sets the `candidate` alias
 
 ## Key files
 
-- `train.py` — All pipeline logic (load, feature engineering, train, evaluate, register)
+- `train.py` — Pipeline logic (load, train, evaluate, register)
 - `__main__.py` — CLI entry point
-- `pyproject.toml` — Dependencies: pandas, scikit-learn, mlflow, numpy
+- `pyproject.toml` — Dependencies: pandas, scikit-learn, mlflow, numpy, pyarrow
 
 ## Feature columns
 

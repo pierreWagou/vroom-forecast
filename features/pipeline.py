@@ -1,15 +1,15 @@
 """
 Vroom Forecast — Feature Pipeline
 
-Single source of truth for feature computation. Reads raw data from CSVs
-and user-saved vehicles from SQLite, computes all features, writes to the
-Feast offline store (Parquet), and materializes to the online store (Redis).
+Single source of truth for feature computation. Reads all vehicles and
+reservations from the SQLite database, computes derived features, writes
+to the Feast offline store (Parquet), and materializes to the online
+store (Redis).
+
+The database must be seeded first (see seed.py).
 
 Usage:
-    uv run python pipeline.py \
-        --data-dir data \
-        --feast-repo features/feature_repo \
-        [--vehicles-db /feast-data/vehicles.db]
+    uv run python pipeline.py --db /feast-data/vehicles.db --feast-repo feature_repo
 """
 
 from __future__ import annotations
@@ -28,73 +28,43 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 PARQUET_PATH = "/feast-data/vehicle_features.parquet"
-VEHICLES_DB = "/feast-data/vehicles.db"
+DB_PATH = "/feast-data/vehicles.db"
 
 
-def load_csv_vehicles(data_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load raw vehicles and reservations from CSVs."""
-    vehicles = pd.read_csv(data_dir / "vehicles.csv")
-    reservations = pd.read_csv(data_dir / "reservations.csv")
-    logger.info(
-        "Loaded %d vehicles and %d reservations from CSV.", len(vehicles), len(reservations)
-    )
-    return vehicles, reservations
-
-
-def load_saved_vehicles(db_path: str) -> pd.DataFrame:
-    """Load user-saved vehicles from the SQLite database."""
-    path = Path(db_path)
-    if not path.exists():
-        logger.info("No vehicles database at %s — skipping.", db_path)
-        return pd.DataFrame()
-
+def load_from_db(db_path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load all vehicles and reservations from the SQLite database."""
     conn = sqlite3.connect(db_path)
-    df = pd.read_sql_query(
+    vehicles = pd.read_sql_query(
         "SELECT vehicle_id, technology, actual_price, recommended_price, "
         "num_images, street_parked, description FROM vehicles",
         conn,
     )
+    reservations = pd.read_sql_query("SELECT vehicle_id, created_at FROM reservations", conn)
     conn.close()
-
-    if len(df) == 0:
-        logger.info("Vehicles database is empty — skipping.")
-        return df
-
-    # Offset IDs to avoid collision with CSV vehicle IDs.
-    # CSV vehicles use IDs starting from 1. User-saved vehicles start from 100_000.
-    df["vehicle_id"] = df["vehicle_id"] + 100_000
-    logger.info("Loaded %d user-saved vehicles from SQLite.", len(df))
-    return df
+    logger.info(
+        "Loaded %d vehicles and %d reservations from database.", len(vehicles), len(reservations)
+    )
+    return vehicles, reservations
 
 
-def compute_features(
-    vehicles: pd.DataFrame, reservations: pd.DataFrame, saved_vehicles: pd.DataFrame
-) -> pd.DataFrame:
-    """Merge all vehicle sources, aggregate reservations, and compute derived features."""
-    # Combine CSV vehicles and user-saved vehicles
-    all_vehicles = pd.concat([vehicles, saved_vehicles], ignore_index=True)
-
-    # Aggregate reservation counts per vehicle (only CSV vehicles have reservations)
+def compute_features(vehicles: pd.DataFrame, reservations: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate reservations and compute derived features."""
+    # Aggregate reservation counts per vehicle
     res_counts = (
         reservations.groupby("vehicle_id").size().reset_index(name="num_reservations")  # ty: ignore[no-matching-overload]
     )
 
-    df = all_vehicles.merge(res_counts, on="vehicle_id", how="left")
+    df = vehicles.merge(res_counts, on="vehicle_id", how="left")
     df["num_reservations"] = df["num_reservations"].fillna(0).astype(int)
 
     # Derived features — the ONLY place these are computed
     df["price_diff"] = df["actual_price"] - df["recommended_price"]
-    df["price_ratio"] = df["actual_price"] / df["recommended_price"]
+    df["price_ratio"] = df["actual_price"] / df["recommended_price"].replace(0, float("nan"))
 
     # Feast requires a timestamp column
     df["event_timestamp"] = pd.Timestamp(datetime.now(tz=UTC))
 
-    logger.info(
-        "Computed features for %d vehicles (%d from CSV, %d user-saved).",
-        len(df),
-        len(vehicles),
-        len(saved_vehicles),
-    )
+    logger.info("Computed features for %d vehicles.", len(df))
     return df
 
 
@@ -120,11 +90,10 @@ def apply_and_materialize(feast_repo: str) -> None:
     logger.info("Features materialized to online store.")
 
 
-def run(data_dir: Path, feast_repo: str, parquet_path: str, vehicles_db: str) -> None:
+def run(db_path: str, feast_repo: str, parquet_path: str) -> None:
     """Full feature pipeline: load → compute → write → apply → materialize."""
-    vehicles, reservations = load_csv_vehicles(data_dir)
-    saved = load_saved_vehicles(vehicles_db)
-    df = compute_features(vehicles, reservations, saved)
+    vehicles, reservations = load_from_db(db_path)
+    df = compute_features(vehicles, reservations)
     write_parquet(df, parquet_path)
     apply_and_materialize(feast_repo)
     logger.info("Feature pipeline complete.")
@@ -132,38 +101,16 @@ def run(data_dir: Path, feast_repo: str, parquet_path: str, vehicles_db: str) ->
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the feature pipeline")
+    parser.add_argument("--db", type=str, default=DB_PATH, help="Path to SQLite database")
     parser.add_argument(
-        "--data-dir",
-        type=Path,
-        default=Path("data"),
-        help="Directory containing vehicles.csv and reservations.csv",
+        "--feast-repo", type=str, default="feature_repo", help="Path to Feast feature repo"
     )
     parser.add_argument(
-        "--feast-repo",
-        type=str,
-        default="feature_repo",
-        help="Path to the Feast feature repo directory",
-    )
-    parser.add_argument(
-        "--parquet-path",
-        type=str,
-        default=PARQUET_PATH,
-        help="Output path for the Parquet file",
-    )
-    parser.add_argument(
-        "--vehicles-db",
-        type=str,
-        default=VEHICLES_DB,
-        help="Path to the SQLite database with user-saved vehicles",
+        "--parquet-path", type=str, default=PARQUET_PATH, help="Output Parquet path"
     )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    run(
-        data_dir=args.data_dir,
-        feast_repo=args.feast_repo,
-        parquet_path=args.parquet_path,
-        vehicles_db=args.vehicles_db,
-    )
+    run(db_path=args.db, feast_repo=args.feast_repo, parquet_path=args.parquet_path)

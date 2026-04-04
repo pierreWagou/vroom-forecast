@@ -29,7 +29,12 @@ jobs:
         run: uv sync
         working-directory: ${{ matrix.project }}
       - name: Type-check ${{ matrix.project }}
-        run: uvx ty check --python ${{ matrix.project }}/.venv ${{ matrix.project }}/
+        run: |
+          if [ -f "${{ matrix.project }}/ty.toml" ]; then
+            uvx ty check --python ${{ matrix.project }}/.venv --config-file ${{ matrix.project }}/ty.toml ${{ matrix.project }}/ --exclude ${{ matrix.project }}/tests/
+          else
+            uvx ty check --python ${{ matrix.project }}/.venv ${{ matrix.project }}/ --exclude ${{ matrix.project }}/tests/
+          fi
 
   # ── Python: tests (per sub-project) ────────────────────────────────────────
   pytest:

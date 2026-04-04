@@ -73,7 +73,7 @@ def load_from_csv(data_dir: Path) -> pd.DataFrame:
     df[TARGET_COL] = df[TARGET_COL].fillna(0).astype(int)
 
     df["price_diff"] = df["actual_price"] - df["recommended_price"]
-    df["price_ratio"] = df["actual_price"] / df["recommended_price"]
+    df["price_ratio"] = df["actual_price"] / df["recommended_price"].replace(0, float("nan"))
 
     logger.info("Loaded %d rows from CSV (fallback).", len(df))
     return df
