@@ -23,6 +23,7 @@ MODEL_NAME = "vroom-forecast"
 CHAMPION_ALIAS = "champion"
 CANDIDATE_ALIAS = "candidate"
 COMPARISON_METRIC = "cv_mae_mean"  # lower is better
+REDIS_CHANNEL = "vroom-forecast:model-promoted"
 
 
 def resolve_candidate_version(
@@ -37,6 +38,24 @@ def resolve_candidate_version(
     mv = client.get_model_version_by_alias(model_name, alias)
     logger.info("Resolved alias '%s' to version %s.", alias, mv.version)
     return mv.version
+
+
+def _notify_promoted(redis_url: str | None, model_name: str, version: str) -> None:
+    """Publish a promotion event to Redis pub/sub."""
+    if redis_url is None:
+        return
+
+    import json
+
+    import redis
+
+    try:
+        r = redis.from_url(redis_url)
+        payload = json.dumps({"model_name": model_name, "version": version})
+        listeners = r.publish(REDIS_CHANNEL, payload)
+        logger.info("Published promotion event to '%s' (%d listeners).", REDIS_CHANNEL, listeners)
+    except Exception:
+        logger.exception("Failed to publish promotion event to Redis.")
 
 
 def promote(
@@ -94,6 +113,7 @@ def promote(
             )
             client.set_registered_model_alias(model_name, CHAMPION_ALIAS, version)
             logger.info("Version %s promoted as champion.", version)
+            _notify_promoted(redis_url, model_name, version)
             return True
 
         logger.info(
@@ -111,6 +131,7 @@ def promote(
                 candidate_metric,
                 champion_metric,
             )
+            _notify_promoted(redis_url, model_name, version)
             return True
         else:
             logger.info(
@@ -128,6 +149,7 @@ def promote(
             "No existing champion. Version %s promoted as first champion.",
             version,
         )
+        _notify_promoted(redis_url, model_name, version)
         return True
 
 
@@ -162,5 +184,11 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=COMPARISON_METRIC,
         help="Metric to compare (lower is better)",
+    )
+    parser.add_argument(
+        "--redis-url",
+        type=str,
+        default=None,
+        help="Redis URL for pub/sub notification on promotion (e.g. redis://localhost:6379)",
     )
     return parser.parse_args()

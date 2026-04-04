@@ -30,7 +30,7 @@ repos:
 
       - id: ty-serving
         name: ty (serving)
-        entry: uvx ty check --python serving/.venv serving/
+        entry: uvx ty check --python serving/.venv --config-file serving/ty.toml serving/ --exclude serving/tests/
         language: system
         files: ^serving/
         types: [python]

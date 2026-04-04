@@ -1,13 +1,16 @@
-"""Champion model loading, feature store access, inference, and model reload via Redis pub/sub."""
+"""Ray Serve deployments and actors for model inference and feature computation."""
 
 from __future__ import annotations
 
+import json
 import logging
-import threading
+from datetime import UTC, datetime
 from typing import Any
 
 import mlflow
 import pandas as pd
+import ray
+from ray import serve
 
 from serving.config import settings
 from serving.features import FEATURE_COLS, engineer_features
@@ -15,14 +18,7 @@ from serving.schemas import VehicleFeatures
 
 logger = logging.getLogger(__name__)
 
-_model: Any = None
-_model_version: str = ""
-_feast_store: Any = None
-_reload_thread: threading.Thread | None = None
-
-REDIS_CHANNEL = "vroom-forecast:model-promoted"
-
-# Feature references for the online store lookup (must match definitions.py)
+# Feature references for Feast online store lookup
 _ONLINE_FEATURE_REFS = [
     "vehicle_features:technology",
     "vehicle_features:actual_price",
@@ -35,164 +31,226 @@ _ONLINE_FEATURE_REFS = [
 ]
 
 
-# ── Model loading ────────────────────────────────────────────────────────────
+@serve.deployment
+class Predictor:
+    """Loads the champion model from MLflow and runs inference.
 
-
-def load_champion() -> None:
-    """Load the champion model from MLflow into module-level state.
-
-    If no champion model exists yet, logs a warning and leaves the model
-    unloaded. The /health endpoint will return 503 until a model is available.
+    Model is loaded in __init__ (deployment startup). To reload after
+    promotion, redeploy this deployment — Ray Serve handles zero-downtime
+    rolling updates.
     """
-    global _model, _model_version  # noqa: PLW0603
 
-    mlflow.set_tracking_uri(settings.mlflow_uri)
-    client = mlflow.MlflowClient()
+    def __init__(self) -> None:
+        self.model: Any = None
+        self.model_version: str = ""
+        self._load_champion()
 
-    try:
-        champion_mv = client.get_model_version_by_alias(settings.model_name, "champion")
-    except Exception:
-        logger.warning(
-            "No champion model found for '%s'. Run the training + promotion pipeline first.",
-            settings.model_name,
-        )
-        return
+    def _load_champion(self) -> None:
+        mlflow.set_tracking_uri(settings.mlflow_uri)
+        client = mlflow.MlflowClient()
 
-    new_version = champion_mv.version
-
-    if new_version == _model_version and _model is not None:
-        logger.info("Champion v%s already loaded — skipping reload.", new_version)
-        return
-
-    model_uri = champion_mv.source
-    logger.info(
-        "Loading champion model: %s v%s from %s",
-        settings.model_name,
-        new_version,
-        model_uri,
-    )
-    _model = mlflow.sklearn.load_model(model_uri)
-    _model_version = new_version
-    logger.info("Model loaded successfully.")
-
-
-# ── Redis pub/sub listener ───────────────────────────────────────────────────
-
-
-def _subscribe_loop() -> None:
-    """Background thread: subscribe to Redis and reload model on promotion events."""
-    import redis
-
-    r = redis.from_url(settings.redis_url)
-    pubsub = r.pubsub()
-    pubsub.subscribe(REDIS_CHANNEL)
-    logger.info("Subscribed to Redis channel '%s' for model reload events.", REDIS_CHANNEL)
-
-    for message in pubsub.listen():
-        if message["type"] != "message":
-            continue
-        logger.info("Received promotion event: %s", message["data"])
         try:
-            load_champion()
+            champion_mv = client.get_model_version_by_alias(settings.model_name, "champion")
         except Exception:
-            logger.exception("Failed to reload champion model after promotion event.")
+            logger.warning(
+                "No champion model found for '%s'. Predictor started without a model.",
+                settings.model_name,
+            )
+            return
+
+        self.model_version = champion_mv.version
+        model_uri = champion_mv.source
+        logger.info("Loading champion model: %s v%s", settings.model_name, self.model_version)
+        self.model = mlflow.sklearn.load_model(model_uri)
+        logger.info("Model loaded successfully.")
+
+    def predict(self, features_df: pd.DataFrame) -> list[float]:
+        """Run inference on a DataFrame of features."""
+        if self.model is None:
+            raise RuntimeError("No model loaded.")
+        raw = self.model.predict(features_df[FEATURE_COLS])
+        return [float(p) for p in raw]
+
+    def reload(self) -> tuple[str, str]:
+        """Reload the champion model. Returns (previous_version, current_version)."""
+        previous = self.model_version
+        self._load_champion()
+        return previous, self.model_version
+
+    def get_version(self) -> str:
+        return self.model_version
+
+    def is_loaded(self) -> bool:
+        return self.model is not None
 
 
-def start_reload_listener() -> None:
-    """Start the background Redis subscriber thread (if Redis is configured)."""
-    global _reload_thread  # noqa: PLW0603
+@serve.deployment
+class FeatureComputer:
+    """Computes derived features from raw vehicle attributes.
 
-    if settings.redis_url is None:
-        logger.info("No SERVING_REDIS_URL configured — model reload listener disabled.")
-        return
-
-    _reload_thread = threading.Thread(target=_subscribe_loop, daemon=True, name="model-reload")
-    _reload_thread.start()
-    logger.info("Model reload listener started.")
-
-
-# ── Feast online store ───────────────────────────────────────────────────────
-
-
-def init_feast() -> None:
-    """Initialize the Feast online store client (if configured and available)."""
-    global _feast_store  # noqa: PLW0603
-
-    if settings.feast_repo is None:
-        logger.info("No SERVING_FEAST_REPO configured — online store disabled.")
-        return
-
-    from pathlib import Path
-
-    repo_path = Path(settings.feast_repo)
-    if not (repo_path / "feature_store.yaml").exists():
-        logger.warning(
-            "Feast repo not found at %s — online store disabled. "
-            "Run the materialize pipeline to populate it.",
-            settings.feast_repo,
-        )
-        return
-
-    from feast import FeatureStore
-
-    _feast_store = FeatureStore(repo_path=settings.feast_repo)
-    logger.info("Feast online store initialized from %s.", settings.feast_repo)
-
-
-# ── Accessors ────────────────────────────────────────────────────────────────
-
-
-def get_model() -> Any:
-    """Return the loaded model, or None if not yet loaded."""
-    return _model
-
-
-def get_model_version() -> str:
-    """Return the loaded model's version string."""
-    return _model_version
-
-
-def feast_available() -> bool:
-    """Return True if the Feast online store is configured and initialized."""
-    return _feast_store is not None
-
-
-# ── Feature lookup ───────────────────────────────────────────────────────────
-
-
-def get_online_features(vehicle_ids: list[int]) -> pd.DataFrame:
-    """Look up pre-computed features from the Feast online store (Redis)."""
-    if _feast_store is None:
-        raise RuntimeError("Feast online store is not initialized.")
-
-    entity_rows = [{"vehicle_id": vid} for vid in vehicle_ids]
-    response = _feast_store.get_online_features(
-        features=_ONLINE_FEATURE_REFS,
-        entity_rows=entity_rows,
-    )
-    return response.to_df()
-
-
-# ── Inference ────────────────────────────────────────────────────────────────
-
-
-def predict_from_features(vehicles: list[VehicleFeatures]) -> list[float]:
-    """Run inference from raw vehicle attributes (computes features on the fly)."""
-    df = pd.DataFrame([v.model_dump() for v in vehicles])
-    df = engineer_features(df)
-    raw = _model.predict(df[FEATURE_COLS])
-    return [float(p) for p in raw]
-
-
-def predict_from_ids(vehicle_ids: list[int]) -> list[float]:
-    """Run inference by looking up pre-computed features from the Feast online store (Redis).
-
-    Features must have been materialized by the feature pipeline.
-    User-saved vehicles are available after the next materialization run.
+    Stateless — no initialization needed. This is the serving-side
+    feature computation, equivalent to the feature pipeline's logic.
     """
-    if _feast_store is None:
-        raise RuntimeError("Feast online store is not initialized.")
 
-    df = get_online_features(vehicle_ids)
-    raw = _model.predict(df[FEATURE_COLS])
-    return [float(p) for p in raw]
+    def compute(self, vehicles: list[VehicleFeatures]) -> pd.DataFrame:
+        """Compute features from raw attributes."""
+        df = pd.DataFrame([v.model_dump() for v in vehicles])
+        return engineer_features(df)
+
+
+@serve.deployment
+class FeatureLookup:
+    """Looks up pre-computed features from the Feast online store (Redis).
+
+    Initialized with the Feast repo path. If the repo doesn't exist,
+    the deployment starts but lookup calls will raise.
+    """
+
+    def __init__(self) -> None:
+        self._store: Any = None
+        self._init_feast()
+
+    def _init_feast(self) -> None:
+        if settings.feast_repo is None:
+            logger.info("No SERVING_FEAST_REPO configured — online store disabled.")
+            return
+
+        from pathlib import Path
+
+        repo_path = Path(settings.feast_repo)
+        if not (repo_path / "feature_store.yaml").exists():
+            logger.warning(
+                "Feast repo not found at %s — online store disabled.", settings.feast_repo
+            )
+            return
+
+        from feast import FeatureStore
+
+        self._store = FeatureStore(repo_path=settings.feast_repo)
+        logger.info("Feast online store initialized from %s.", settings.feast_repo)
+
+    def lookup(self, vehicle_ids: list[int]) -> pd.DataFrame:
+        """Look up features from Feast online store."""
+        if self._store is None:
+            raise RuntimeError("Feast online store is not initialized.")
+        entity_rows = [{"vehicle_id": vid} for vid in vehicle_ids]
+        response = self._store.get_online_features(
+            features=_ONLINE_FEATURE_REFS,
+            entity_rows=entity_rows,
+        )
+        return response.to_df()
+
+    def is_available(self) -> bool:
+        return self._store is not None
+
+
+VEHICLE_SAVED_CHANNEL = "vroom-forecast:vehicle-saved"
+VEHICLE_ID_OFFSET = 100_000
+
+
+@ray.remote
+class FeatureMaterializer:
+    """Ray actor that subscribes to Redis pub/sub and materializes features
+    to the Feast online store in real time.
+
+    This is a long-running actor (not a Serve deployment) — it doesn't
+    handle HTTP. It runs inside the same Ray cluster as the Serve deployments.
+    """
+
+    def __init__(self) -> None:
+        self._store: Any = None
+        self._init_feast()
+
+    def _init_feast(self) -> None:
+        if settings.feast_repo is None:
+            logger.info("FeatureMaterializer: no Feast repo configured — disabled.")
+            return
+
+        import sys
+        from pathlib import Path
+
+        repo_path = Path(settings.feast_repo)
+        if not (repo_path / "feature_store.yaml").exists():
+            logger.warning(
+                "FeatureMaterializer: Feast repo not found at %s — disabled.",
+                settings.feast_repo,
+            )
+            return
+
+        # Add the feast repo parent to sys.path so definitions.py can be imported
+        sys.path.insert(0, str(repo_path.parent))
+
+        from feast import FeatureStore
+        from feature_repo.definitions import (
+            vehicle,
+            vehicle_features_source,
+            vehicle_features_view,
+        )
+
+        self._store = FeatureStore(repo_path=settings.feast_repo)
+        self._store.apply(
+            [vehicle, vehicle_features_source, vehicle_features_view]  # type: ignore[list-item]
+        )
+        logger.info("FeatureMaterializer: Feast store initialized.")
+
+    def _compute_and_write(self, vehicle_id: int, raw: dict) -> None:
+        """Compute derived features and write to the Feast online store."""
+        if self._store is None:
+            print(
+                f"[FeatureMaterializer] store not initialized, skipping vehicle {vehicle_id}",
+                flush=True,
+            )
+            return
+
+        features = {
+            **raw,
+            "price_diff": raw["actual_price"] - raw["recommended_price"],
+            "price_ratio": raw["actual_price"] / raw["recommended_price"],
+        }
+
+        row = {
+            "vehicle_id": vehicle_id,
+            "technology": features["technology"],
+            "actual_price": features["actual_price"],
+            "recommended_price": features["recommended_price"],
+            "num_images": features["num_images"],
+            "street_parked": features["street_parked"],
+            "description": features["description"],
+            "price_diff": features["price_diff"],
+            "price_ratio": features["price_ratio"],
+            "num_reservations": 0,
+            "event_timestamp": pd.Timestamp(datetime.now(tz=UTC)),
+        }
+
+        df = pd.DataFrame([row])
+        self._store.write_to_online_store("vehicle_features", df)
+        db_id = vehicle_id - VEHICLE_ID_OFFSET
+        print(
+            f"[FeatureMaterializer] Materialized DB#{db_id} -> FS#{vehicle_id}",
+            flush=True,
+        )
+
+    def run(self) -> None:
+        """Subscribe to Redis and process vehicle-saved events forever."""
+        if settings.redis_url is None:
+            print("[FeatureMaterializer] No Redis URL — exiting.", flush=True)
+            return
+
+        import redis
+
+        r = redis.from_url(settings.redis_url)
+        pubsub = r.pubsub()
+        pubsub.subscribe(VEHICLE_SAVED_CHANNEL)
+        print(f"[FeatureMaterializer] Subscribed to '{VEHICLE_SAVED_CHANNEL}'.", flush=True)
+
+        for message in pubsub.listen():
+            if message["type"] != "message":
+                continue
+            try:
+                print(f"[FeatureMaterializer] Got event: {message['data']}", flush=True)
+                raw = json.loads(message["data"])
+                db_id = raw.pop("vehicle_id")
+                feature_store_id = db_id + VEHICLE_ID_OFFSET
+                self._compute_and_write(feature_store_id, raw)
+            except Exception as e:
+                print(f"[FeatureMaterializer] Error: {e}", flush=True)

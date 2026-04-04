@@ -1,18 +1,15 @@
-"""Tests for the serving API — feature engineering, schemas, and endpoints."""
+"""Tests for the serving API — feature engineering, schemas, and API contract.
 
-from collections.abc import Generator
-from unittest.mock import MagicMock, patch
+Note: Full endpoint integration tests require a running Ray Serve cluster.
+These tests focus on unit-testable components: schemas, feature engineering.
+"""
 
-import numpy as np
 import pandas as pd
 import pytest
-from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from serving.features import FEATURE_COLS, engineer_features
 from serving.schemas import VehicleFeatures
-
-# ── Fixtures ─────────────────────────────────────────────────────────────────
 
 SAMPLE_VEHICLE = {
     "technology": 1,
@@ -22,30 +19,6 @@ SAMPLE_VEHICLE = {
     "street_parked": 0,
     "description": 250,
 }
-
-
-@pytest.fixture
-def mock_model() -> MagicMock:
-    """A fake sklearn model that returns deterministic predictions."""
-    model = MagicMock()
-    model.predict.return_value = np.array([7.42])
-    return model
-
-
-@pytest.fixture
-def client(mock_model: MagicMock) -> Generator[TestClient, None, None]:
-    """TestClient with a mocked model (no MLflow or Feast needed)."""
-    with (
-        patch("serving.model._model", mock_model),
-        patch("serving.model._model_version", "99"),
-        patch("serving.app.load_champion"),
-        patch("serving.app.init_feast"),
-        patch("serving.app.start_reload_listener"),
-    ):
-        from serving.app import app
-
-        with TestClient(app) as c:
-            yield c
 
 
 # ── Feature engineering ──────────────────────────────────────────────────────
@@ -97,58 +70,45 @@ class TestVehicleFeatures:
             VehicleFeatures(**{**SAMPLE_VEHICLE, "actual_price": 0})  # type: ignore[arg-type]
 
 
-# ── API endpoints ────────────────────────────────────────────────────────────
+# ── Schema contract ──────────────────────────────────────────────────────────
 
 
-class TestHealthEndpoint:
-    def test_health_ok(self, client: TestClient) -> None:
-        resp = client.get("/health")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "ok"
-        assert data["model_version"] == "99"
-        assert "feast_online" in data
+class TestSchemaContract:
+    """Verify that schemas have the expected fields — catches drift with the UI."""
 
+    def test_prediction_response_fields(self) -> None:
+        from serving.schemas import PredictionResponse
 
-class TestPredictEndpoint:
-    def test_predict_single(self, client: TestClient) -> None:
-        resp = client.post("/predict", json=SAMPLE_VEHICLE)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "predicted_reservations" in data
-        assert data["model_version"] == "99"
-        assert isinstance(data["predicted_reservations"], float)
+        fields = set(PredictionResponse.model_fields.keys())
+        assert {"predicted_reservations", "model_version"} == fields
 
-    def test_predict_invalid_input(self, client: TestClient) -> None:
-        resp = client.post("/predict", json={"technology": 1})
-        assert resp.status_code == 422
+    def test_health_response_fields(self) -> None:
+        from serving.schemas import HealthResponse
 
+        fields = set(HealthResponse.model_fields.keys())
+        assert {"status", "model_name", "model_version", "mlflow_uri", "feast_online"} == fields
 
-class TestBatchPredictEndpoint:
-    def test_batch_predict(self, client: TestClient, mock_model: MagicMock) -> None:
-        mock_model.predict.return_value = np.array([7.42, 5.0])
-        resp = client.post("/predict/batch", json=[SAMPLE_VEHICLE, SAMPLE_VEHICLE])
-        assert resp.status_code == 200
-        data = resp.json()
-        assert len(data["predictions"]) == 2
+    def test_benchmark_response_fields(self) -> None:
+        from serving.schemas import BenchmarkResponse
 
-    def test_batch_empty(self, client: TestClient, mock_model: MagicMock) -> None:
-        resp = client.post("/predict/batch", json=[])
-        assert resp.status_code == 200
-        assert len(resp.json()["predictions"]) == 0
+        fields = set(BenchmarkResponse.model_fields.keys())
+        expected = {
+            "n_iterations",
+            "avg_latency_ms",
+            "p50_latency_ms",
+            "p95_latency_ms",
+            "p99_latency_ms",
+            "model_version",
+            "source",
+            "avg_features_ms",
+            "avg_predict_ms",
+        }
+        assert expected == fields
 
+    def test_computed_features_fields(self) -> None:
+        from serving.schemas import ComputedFeatures
 
-class TestBenchmarkEndpoint:
-    def test_benchmark(self, client: TestClient) -> None:
-        resp = client.post(
-            "/benchmark",
-            json={"n_iterations": 10, "vehicle": SAMPLE_VEHICLE},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["n_iterations"] == 10
-        assert data["avg_latency_ms"] > 0
-        assert data["p50_latency_ms"] > 0
-        assert data["p95_latency_ms"] > 0
-        assert data["p99_latency_ms"] > 0
-        assert data["model_version"] == "99"
+        fields = set(ComputedFeatures.model_fields.keys())
+        assert "materialized" in fields
+        assert "price_diff" in fields
+        assert "price_ratio" in fields

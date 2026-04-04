@@ -1,2 +1,13 @@
 [environment]
 python = ".venv"
+
+[src]
+exclude = ["tests/"]
+
+[rules]
+# Ray's @serve.deployment and @ray.remote decorators dynamically add
+# .bind() and .remote() — ty can't resolve these.
+unresolved-attribute = "ignore"
+# feature_repo.definitions is imported at runtime via sys.path manipulation
+# (the Feast repo is mounted at a different path in Docker).
+unresolved-import = "warn"

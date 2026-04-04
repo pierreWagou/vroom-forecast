@@ -5,12 +5,13 @@ WORKDIR /app
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Copy the serving sub-project (pyproject.toml, lock, source)
+# Copy the serving sub-project
 COPY serving/ serving/
 
-# Install deps
+# Install deps (Ray Serve + FastAPI + ML deps)
 RUN uv sync --project serving
 
-EXPOSE 8000
+# Ray Serve HTTP port + Ray dashboard
+EXPOSE 8000 8265
 
 CMD ["uv", "run", "--project", "serving", "python", "-m", "serving"]

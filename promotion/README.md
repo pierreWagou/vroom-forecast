@@ -3,14 +3,20 @@
 Independent uv project that compares a candidate model against the current
 champion and promotes it if the candidate has a lower `cv_mae_mean`.
 
+On successful promotion, publishes an event to Redis pub/sub so downstream
+consumers (e.g. the Ray Serve Predictor) can reload the model.
+
 ## Running
 
 ```bash
 # Resolve candidate from MLflow "candidate" alias:
 uv run --project promotion python -m promotion --mlflow-uri http://localhost:5001
 
-# Or with explicit version:
-uv run --project promotion python -m promotion --version 5 --mlflow-uri http://localhost:5001
+# With explicit version + Redis notification:
+uv run --project promotion python -m promotion \
+    --version 5 \
+    --mlflow-uri http://localhost:5001 \
+    --redis-url redis://localhost:6379
 ```
 
 ## What it does
@@ -20,9 +26,10 @@ uv run --project promotion python -m promotion --version 5 --mlflow-uri http://l
 3. Fetches the current champion's `cv_mae_mean` (if one exists)
 4. If candidate < champion: promotes candidate to `champion` alias
 5. If no champion exists: promotes candidate as first champion
+6. On promotion: publishes event to Redis channel `vroom-forecast:model-promoted`
 
 ## Key files
 
-- `promote.py` — Promotion logic + CLI arg parsing
+- `promote.py` — Promotion logic, Redis notification, CLI arg parsing
 - `__main__.py` — CLI entry point (always exits 0; prints `promoted` or `retained`)
-- `pyproject.toml` — Dependencies: mlflow only
+- `pyproject.toml` — Dependencies: mlflow, redis

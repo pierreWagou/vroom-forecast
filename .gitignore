@@ -11,6 +11,7 @@ __pycache__/
 # MLflow local data
 mlruns/
 mlartifacts/
+mlflow.db
 
 # Feast local data
 feast-data/
@@ -30,3 +31,6 @@ airflow/logs/
 # Node.js
 node_modules/
 .next/
+
+# Logs
+mprocs.log

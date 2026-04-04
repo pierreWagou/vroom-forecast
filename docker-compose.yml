@@ -73,22 +73,6 @@ services:
       && echo admin > /opt/airflow/standalone_admin_password.txt
       && airflow standalone"
 
-  feature-worker:
-    build:
-      context: .
-      dockerfile: airflow/Dockerfile
-    depends_on:
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./features:/opt/airflow/features
-      - ./feast-data:/feast-data
-    command: >
-      bash -c "cd /opt/airflow/features
-      && uv run python worker.py
-      --feast-repo /opt/airflow/features/feature_repo
-      --redis-url redis://redis:6379"
-
   serving:
     build:
       context: .
@@ -100,6 +84,7 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+      - "8265:8265"
     environment:
       - SERVING_MLFLOW_URI=http://mlflow:5000
       - SERVING_MODEL_NAME=vroom-forecast

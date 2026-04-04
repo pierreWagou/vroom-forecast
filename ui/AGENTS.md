@@ -10,3 +10,12 @@ You are a frontend engineer building a demo UI for an ML prediction service.
 - API client in `lib/api.ts` — keep types in sync with `serving/schemas.py`
 - Linted with eslint-config-next (TypeScript + Core Web Vitals)
 - No Python in this directory; this is a pure npm project
+
+## Known improvements
+
+- **Replace polling with SSE for materialization status.** The Fleet tab polls
+  `GET /vehicles/{id}/features` every 2s for pending vehicles. The correct
+  pattern is Server-Sent Events: the FeatureMaterializer Ray actor publishes
+  a "vehicle materialized" event to a Redis channel, and a `GET /vehicles/{id}/features/stream`
+  SSE endpoint subscribes and pushes to the client. This eliminates polling
+  and gives instant badge updates.

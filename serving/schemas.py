@@ -43,6 +43,11 @@ class BenchmarkRequest(BaseModel):
     vehicle: VehicleFeatures
 
 
+class BenchmarkByIdRequest(BaseModel):
+    n_iterations: int = Field(default=1000, ge=1, le=100_000)
+    vehicle_id: int = Field(..., gt=0)
+
+
 class BenchmarkResponse(BaseModel):
     n_iterations: int
     avg_latency_ms: float
@@ -50,6 +55,10 @@ class BenchmarkResponse(BaseModel):
     p95_latency_ms: float
     p99_latency_ms: float
     model_version: str
+    source: str = "raw"  # "raw" or "online_store"
+    # Step-level breakdown
+    avg_features_ms: float = 0.0  # feature computation or lookup time
+    avg_predict_ms: float = 0.0  # model.predict() time
 
 
 class HealthResponse(BaseModel):
@@ -87,3 +96,18 @@ class VehicleRecord(BaseModel):
     num_images: int
     street_parked: int
     description: int
+
+
+class ComputedFeatures(BaseModel):
+    """Features as computed by the feature pipeline and stored in the online store."""
+
+    vehicle_id: int
+    technology: int | None = None
+    actual_price: float | None = None
+    recommended_price: float | None = None
+    num_images: int | None = None
+    street_parked: int | None = None
+    description: int | None = None
+    price_diff: float | None = None
+    price_ratio: float | None = None
+    materialized: bool = False

@@ -11,9 +11,6 @@ procs:
   serving:
     shell: "docker compose up --build --menu=false serving"
     stop: "SIGINT"
-  feature-worker:
-    shell: "docker compose up --build --menu=false feature-worker"
-    stop: "SIGINT"
   ui:
     cmd: ["npm", "run", "dev"]
     cwd: "ui"

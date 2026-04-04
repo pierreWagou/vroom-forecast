@@ -1,94 +1,84 @@
 ---
 name: run-pipeline
-description: How to run training, promotion, and exploration pipelines — locally with uv, via Airflow, or with docker compose
+description: How to run services locally — all pipelines, Docker services, and dev tools
 ---
 
 ## Local Development
 
 Start all services:
 ```bash
-mprocs                  # MLflow (5001) + Airflow (8080) + Serving (8000) + Jupyter (8888)
-docker compose up       # Just MLflow + Airflow + Serving
+mprocs                  # MLflow, Redis, Airflow, Serving, UI, Jupyter
+docker compose up       # Just Docker services (no UI or Jupyter)
 ```
 
 ## Running Pipelines Locally
 
-Training (registers a model version, sets `candidate` alias):
+Feature materialization:
+```bash
+cd features && uv run python pipeline.py \
+    --data-dir ../data \
+    --feast-repo feature_repo
+```
+
+Training (from offline store):
+```bash
+uv run --project training python -m training \
+    --feature-store /feast-data/vehicle_features.parquet \
+    --mlflow-uri http://localhost:5001
+```
+
+Training (from CSV fallback):
 ```bash
 uv run --project training python -m training \
     --data-dir data \
     --mlflow-uri http://localhost:5001
 ```
 
-Promotion (compares candidate vs champion — uses its own uv project):
+Promotion:
 ```bash
-# By alias (default: resolves "candidate" from MLflow):
 uv run --project promotion python -m promotion \
-    --mlflow-uri http://localhost:5001
-
-# By explicit version:
-uv run --project promotion python -m promotion \
-    --version 5 \
-    --mlflow-uri http://localhost:5001
+    --mlflow-uri http://localhost:5001 \
+    --redis-url redis://localhost:6379
 ```
 
-Serving (FastAPI — runs locally against MLflow):
+Serving (Ray Serve):
 ```bash
 uv run --project serving python -m serving
-# Or with env var:
-SERVING_MLFLOW_URI=http://localhost:5001 uv run --project serving python -m serving
 ```
 
-Exploration (Jupyter notebook):
-```bash
-uv run --project exploration jupyter notebook
-```
+## Running via Airflow
 
-## Running Pipelines via Airflow
-
-Trigger training (cascades to promotion via TriggerDagRunOperator):
 ```bash
+docker compose exec airflow airflow dags trigger vroom_forecast_materialize
 docker compose exec airflow airflow dags trigger vroom_forecast_training
-```
-
-Trigger promotion standalone:
-```bash
-# With explicit version via conf:
-docker compose exec airflow airflow dags trigger vroom_forecast_promotion \
-    --conf '{"model_version": "5"}'
-
-# Without conf (resolves "candidate" alias from MLflow):
 docker compose exec airflow airflow dags trigger vroom_forecast_promotion
 ```
 
 ## Airflow DAGs
 
-| DAG | Schedule | Trigger |
-|-----|----------|---------|
-| `vroom_forecast_training` | `0 2 * * 0` (Sundays 02:00 UTC) | Scheduled + manual |
-| `vroom_forecast_promotion` | None | Event-driven (from training DAG) + manual |
-
-## Inside the Airflow Container
-
-The Airflow image has `uv` but no ML deps. Each BashOperator task runs:
-```bash
-uv run --project <project> python -m <module> [args]
-```
-uv creates and caches a venv inside the container on first run.
+| DAG | Schedule | Description |
+|-----|----------|-------------|
+| `vroom_forecast_materialize` | `0 1 * * *` (daily) | Compute features → Parquet + Redis |
+| `vroom_forecast_training` | `0 2 * * 0` (Sundays) | Train from offline store → register candidate |
+| `vroom_forecast_promotion` | None (event-driven) | Compare candidate vs champion → promote |
 
 ## Ports
 
 | Service | Port |
 |---------|------|
 | MLflow UI | http://localhost:5001 |
-| Airflow UI | http://localhost:8080 (admin/admin) |
+| Airflow UI | http://localhost:8080 |
 | Serving API | http://localhost:8000 |
 | Serving docs | http://localhost:8000/docs |
+| Ray Dashboard | http://localhost:8265 |
+| Redis | localhost:6379 |
+| Redis Insight | http://localhost:5540 |
+| UI (Next.js) | http://localhost:3000 |
 | Jupyter | http://localhost:8888 |
 
-## Dev Tools Setup (root project)
+## Dev Tools Setup
 
 ```bash
-uv sync                     # Install ruff, ty, pre-commit
-uv run pre-commit install   # Set up git hooks
+uvx pre-commit install   # Set up git hooks (one-time)
+uvx pre-commit run --all-files  # Run all checks
 ```
