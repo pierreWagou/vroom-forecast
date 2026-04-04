@@ -18,6 +18,7 @@ from airflow.operators.bash import BashOperator
 from airflow import DAG
 
 MLFLOW_URI = "http://mlflow:5000"
+REDIS_URL = "redis://redis:6379"
 PROJECT_DIR = "/opt/airflow"
 
 with DAG(
@@ -45,6 +46,9 @@ with DAG(
         task_id="promote",
         cwd=PROJECT_DIR,
         bash_command=(
-            f"uv run --project promotion python -m promotion {version_arg}--mlflow-uri {MLFLOW_URI}"
+            f"uv run --project promotion python -m promotion "
+            f"{version_arg}"
+            f"--mlflow-uri {MLFLOW_URI} "
+            f"--redis-url {REDIS_URL}"
         ),
     )

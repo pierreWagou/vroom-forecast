@@ -22,12 +22,32 @@ services:
       retries: 5
       start_period: 15s
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-insight:
+    image: redis/redisinsight:latest
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "5540:5540"
+
   airflow:
     build:
       context: .
       dockerfile: airflow/Dockerfile
     depends_on:
       mlflow:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     ports:
       - "8080:8080"
@@ -36,19 +56,38 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
       - AIRFLOW__CORE__FERNET_KEY=
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
       - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
       - AIRFLOW__WEBSERVER__SECRET_KEY=vroom-forecast-dev-key
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./training:/opt/airflow/training
       - ./promotion:/opt/airflow/promotion
+      - ./features:/opt/airflow/features
       - ./data:/opt/airflow/data:ro
       - ./mlartifacts:/mlartifacts
+      - ./feast-data:/feast-data
     command: >
       bash -c "airflow db migrate
       && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com
       && echo admin > /opt/airflow/standalone_admin_password.txt
       && airflow standalone"
+
+  feature-worker:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./features:/opt/airflow/features
+      - ./feast-data:/feast-data
+    command: >
+      bash -c "cd /opt/airflow/features
+      && uv run python worker.py
+      --feast-repo /opt/airflow/features/feature_repo
+      --redis-url redis://redis:6379"
 
   serving:
     build:
@@ -57,13 +96,19 @@ services:
     depends_on:
       mlflow:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8000:8000"
     environment:
       - SERVING_MLFLOW_URI=http://mlflow:5000
       - SERVING_MODEL_NAME=vroom-forecast
+      - SERVING_FEAST_REPO=/app/feature_repo
+      - SERVING_REDIS_URL=redis://redis:6379
     volumes:
       - ./mlartifacts:/mlartifacts
+      - ./feast-data:/feast-data
+      - ./features/feature_repo:/app/feature_repo:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s

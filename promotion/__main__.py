@@ -10,5 +10,6 @@ if __name__ == "__main__":
         candidate_version=args.version,
         candidate_alias=args.candidate_alias,
         metric_name=args.metric,
+        redis_url=args.redis_url,
     )
     print("promoted" if promoted else "retained")

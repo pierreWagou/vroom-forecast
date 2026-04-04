@@ -34,11 +34,13 @@ def mock_model() -> MagicMock:
 
 @pytest.fixture
 def client(mock_model: MagicMock) -> Generator[TestClient, None, None]:
-    """TestClient with a mocked model (no MLflow needed)."""
+    """TestClient with a mocked model (no MLflow or Feast needed)."""
     with (
         patch("serving.model._model", mock_model),
         patch("serving.model._model_version", "99"),
         patch("serving.app.load_champion"),
+        patch("serving.app.init_feast"),
+        patch("serving.app.start_reload_listener"),
     ):
         from serving.app import app
 
@@ -105,6 +107,7 @@ class TestHealthEndpoint:
         data = resp.json()
         assert data["status"] == "ok"
         assert data["model_version"] == "99"
+        assert "feast_online" in data
 
 
 class TestPredictEndpoint:

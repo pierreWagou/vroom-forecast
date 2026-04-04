@@ -45,6 +45,7 @@ def promote(
     metric_name: str,
     candidate_version: str | None = None,
     candidate_alias: str = CANDIDATE_ALIAS,
+    redis_url: str | None = None,
 ) -> bool:
     """Compare candidate against champion and promote if better.
 

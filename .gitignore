@@ -12,6 +12,9 @@ __pycache__/
 mlruns/
 mlartifacts/
 
+# Feast local data
+feast-data/
+
 # Jupyter
 .ipynb_checkpoints/
 

@@ -7,6 +7,7 @@ ENV PYTHONWARNINGS="ignore::SyntaxWarning"
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Copy each sub-project with its own pyproject.toml + uv.lock + source.
-# Airflow runs training and promotion as independent uv projects.
+# Airflow runs training, promotion, and features as independent uv projects.
 COPY training/ training/
 COPY promotion/ promotion/
+COPY features/ features/

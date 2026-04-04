@@ -1,6 +1,18 @@
 procs:
-  infra:
-    cmd: ["docker", "compose", "--ansi", "always", "up", "--build", "--menu=false"]
+  mlflow:
+    shell: "docker compose up --menu=false mlflow"
+    stop: "SIGINT"
+  redis:
+    shell: "docker compose up --menu=false redis"
+    stop: "SIGINT"
+  airflow:
+    shell: "docker compose up --build --menu=false airflow"
+    stop: "SIGINT"
+  serving:
+    shell: "docker compose up --build --menu=false serving"
+    stop: "SIGINT"
+  feature-worker:
+    shell: "docker compose up --build --menu=false feature-worker"
     stop: "SIGINT"
   ui:
     cmd: ["npm", "run", "dev"]

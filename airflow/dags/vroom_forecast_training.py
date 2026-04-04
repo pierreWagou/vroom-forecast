@@ -1,8 +1,10 @@
 """
 Vroom Forecast — Training DAG
 
-Trains a Random Forest model, registers it in MLflow with the "candidate"
-alias, then triggers the promotion DAG to evaluate it against the champion.
+Trains a Random Forest model using features from the offline store, registers
+it in MLflow with the "candidate" alias, then triggers the promotion DAG.
+
+Assumes features have already been materialized by the materialize DAG.
 
 Runs weekly on Sundays at 02:00 UTC. Can also be triggered manually.
 """
@@ -16,7 +18,7 @@ from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow import DAG
 
 MLFLOW_URI = "http://mlflow:5000"
-DATA_DIR = "/opt/airflow/data"
+FEATURE_STORE = "/feast-data/vehicle_features.parquet"
 PROJECT_DIR = "/opt/airflow"
 
 with DAG(
@@ -37,7 +39,7 @@ with DAG(
         cwd=PROJECT_DIR,
         bash_command=(
             f"uv run --project training python -m training "
-            f"--data-dir {DATA_DIR} "
+            f"--feature-store {FEATURE_STORE} "
             f"--mlflow-uri {MLFLOW_URI}"
         ),
         # Last line of stdout (the model version) is pushed to XCom

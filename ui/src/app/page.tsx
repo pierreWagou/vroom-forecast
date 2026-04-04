@@ -24,12 +24,17 @@ import {
 } from "@/components/ui/tooltip";
 import {
   predict,
+  predictById,
   fetchHealth,
   benchmark,
+  reloadModel,
+  saveVehicle,
+  listVehicles,
   type VehicleFeatures,
   type PredictionResponse,
   type HealthResponse,
   type BenchmarkResponse,
+  type VehicleRecord,
 } from "@/lib/api";
 
 const DEFAULT_VEHICLE: VehicleFeatures = {
@@ -59,10 +64,36 @@ export default function Home() {
   const [benchLoading, setBenchLoading] = useState(false);
   const [benchProgress, setBenchProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedVehicles, setSavedVehicles] = useState<VehicleRecord[]>([]);
+  const [vehiclePredictions, setVehiclePredictions] = useState<
+    Record<number, PredictionResponse>
+  >({});
 
   useEffect(() => {
+    setMounted(true);
     fetchHealth().then(setHealth).catch(() => setHealth(null));
   }, []);
+
+  const handleReload = async () => {
+    setReloading(true);
+    setError(null);
+    try {
+      const result = await reloadModel();
+      // Refresh health to get updated version
+      const h = await fetchHealth();
+      setHealth(h);
+      if (result.status === "reloaded") {
+        setError(null);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Reload failed");
+    } finally {
+      setReloading(false);
+    }
+  };
 
   const handlePredict = useCallback(async () => {
     setLoading(true);
@@ -99,6 +130,62 @@ export default function Home() {
 
   const update = (field: keyof VehicleFeatures, value: number) =>
     setVehicle((prev) => ({ ...prev, [field]: value }));
+
+  const handleSaveVehicle = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await saveVehicle(vehicle);
+      const vehicles = await listVehicles();
+      setSavedVehicles(vehicles);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePredictById = async (vehicleId: number) => {
+    setError(null);
+    try {
+      // User-saved vehicles are offset by 100_000 in the feature store
+      const result = await predictById(vehicleId + 100_000);
+      setVehiclePredictions((prev) => ({ ...prev, [vehicleId]: result }));
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message.includes("500")
+            ? `Vehicle #${vehicleId} not yet materialized. Run the feature pipeline first.`
+            : e.message
+          : "Prediction failed"
+      );
+    }
+  };
+
+  const handlePredictAll = async () => {
+    setError(null);
+    for (const v of savedVehicles) {
+      try {
+        const result = await predictById(v.vehicle_id + 100_000);
+        setVehiclePredictions((prev) => ({ ...prev, [v.vehicle_id]: result }));
+      } catch {
+        // Skip vehicles not yet materialized
+      }
+    }
+  };
+
+  const refreshVehicles = useCallback(async () => {
+    try {
+      const vehicles = await listVehicles();
+      setSavedVehicles(vehicles);
+    } catch {
+      // silently ignore — vehicles tab may not be active
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mounted) refreshVehicles();
+  }, [mounted, refreshVehicles]);
 
   const priceRatio =
     vehicle.recommended_price > 0
@@ -139,26 +226,58 @@ export default function Home() {
               </p>
             </div>
 
-            {/* Model status pill */}
-            <Tooltip>
-              <TooltipTrigger>
-                <div className="flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 text-sm backdrop-blur-sm cursor-default">
-                  <StatusDot online={!!health} />
-                  {health ? (
-                    <span>
-                      Model v{health.model_version}
-                    </span>
-                  ) : (
-                    <span className="text-white/60">Offline</span>
-                  )}
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                {health
-                  ? `Connected to ${health.model_name} on MLflow`
-                  : "Cannot reach the prediction API"}
-              </TooltipContent>
-            </Tooltip>
+            {/* Model status + reload */}
+            <div className="flex items-center gap-2">
+              <Tooltip>
+                <TooltipTrigger>
+                  <div className="flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 text-sm backdrop-blur-sm cursor-default">
+                    <StatusDot online={!!health} />
+                    {health ? (
+                      <span>
+                        Model v{health.model_version}
+                      </span>
+                    ) : (
+                      <span className="text-white/60">Offline</span>
+                    )}
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  {health
+                    ? `Connected to ${health.model_name} on MLflow`
+                    : "Cannot reach the prediction API"}
+                </TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={reloading || !health ? undefined : handleReload}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !reloading && health) handleReload();
+                    }}
+                    className={`flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors ${reloading || !health ? "opacity-50 cursor-not-allowed" : "hover:bg-white/25 cursor-pointer"}`}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className={`h-4 w-4 ${reloading ? "animate-spin" : ""}`}
+                    >
+                      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+                      <path d="M21 3v5h-5" />
+                    </svg>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  Reload champion model from MLflow
+                </TooltipContent>
+              </Tooltip>
+            </div>
           </div>
         </div>
       </div>
@@ -184,6 +303,12 @@ export default function Home() {
               className="rounded-full data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
             >
               Benchmark
+            </TabsTrigger>
+            <TabsTrigger
+              value="vehicles"
+              className="rounded-full data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+            >
+              Vehicles
             </TabsTrigger>
           </TabsList>
 
@@ -400,36 +525,66 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <Button
-                    className="w-full rounded-full h-11 text-base font-semibold shadow-lg shadow-primary/25"
-                    size="lg"
-                    onClick={handlePredict}
-                    disabled={loading || !health}
-                  >
-                    {loading ? (
-                      <span className="flex items-center gap-2">
-                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
+                  <div className="flex gap-3">
+                    <Button
+                      className="flex-1 rounded-full h-11 text-base font-semibold shadow-lg shadow-primary/25"
+                      size="lg"
+                      onClick={handlePredict}
+                      disabled={loading || (mounted && !health)}
+                    >
+                      {loading ? (
+                        <span className="flex items-center gap-2">
+                          <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                              fill="none"
+                            />
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                            />
+                          </svg>
+                          Predicting...
+                        </span>
+                      ) : (
+                        "Predict"
+                      )}
+                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={saving || !health ? undefined : handleSaveVehicle}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !saving && health) handleSaveVehicle();
+                          }}
+                          className={`flex h-11 w-11 items-center justify-center rounded-full border ${saving || !health ? "opacity-50 cursor-not-allowed" : "hover:bg-muted cursor-pointer"}`}
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
                             fill="none"
-                          />
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                          />
-                        </svg>
-                        Predicting...
-                      </span>
-                    ) : (
-                      "Predict Reservations"
-                    )}
-                  </Button>
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className={`h-5 w-5 ${saving ? "animate-pulse" : ""}`}
+                          >
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                            <polyline points="17 21 17 13 7 13 7 21" />
+                            <polyline points="7 3 7 8 15 8" />
+                          </svg>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>Save to fleet</TooltipContent>
+                    </Tooltip>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -560,7 +715,7 @@ export default function Home() {
               <CardContent className="space-y-6">
                 <Button
                   onClick={handleBenchmark}
-                  disabled={benchLoading || !health}
+                  disabled={benchLoading || (mounted && !health)}
                   className="rounded-full shadow-lg shadow-primary/25"
                   size="lg"
                 >
@@ -654,6 +809,124 @@ export default function Home() {
                     {benchmarkResult.n_iterations.toLocaleString()} iterations
                     using model v{benchmarkResult.model_version}
                   </p>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* ── Vehicles Tab (Fleet Dashboard) ── */}
+          <TabsContent value="vehicles">
+            <Card className="shadow-md border-0 bg-white">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg">Fleet</CardTitle>
+                    <CardDescription>
+                      Saved vehicles with predictions from the online feature store.
+                      Save vehicles from the Predict tab using the
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="inline h-3.5 w-3.5 mx-1 -mt-0.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>
+                      button.
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {savedVehicles.length > 0 && (
+                      <Button
+                        size="sm"
+                        className="rounded-full"
+                        onClick={handlePredictAll}
+                        disabled={mounted && !health}
+                      >
+                        Predict All
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={refreshVehicles}
+                      className="rounded-full"
+                    >
+                      Refresh
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {savedVehicles.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-8 w-8 text-muted-foreground/50">
+                        <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-2-2.2-3.3C12.4 5 10.5 4 8.8 4H6.4c-1.1 0-2.1.6-2.7 1.4L2 8H1v2h1l.7 1H1v2h1v3c0 .6.4 1 1 1h2" />
+                        <circle cx="7" cy="17" r="2" />
+                        <circle cx="17" cy="17" r="2" />
+                      </svg>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      No vehicles in your fleet yet.
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Configure a vehicle in the Predict tab and save it.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {savedVehicles.map((v) => {
+                      const pred = vehiclePredictions[v.vehicle_id];
+                      return (
+                        <div
+                          key={v.vehicle_id}
+                          className="flex items-center justify-between rounded-xl border p-4 hover:bg-muted/30 transition-colors"
+                        >
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold">
+                                #{v.vehicle_id}
+                              </span>
+                              <Badge variant="outline" className="rounded-full text-xs font-mono">
+                                ${v.actual_price}/day
+                              </Badge>
+                              {v.technology === 1 && (
+                                <Badge variant="secondary" className="rounded-full text-xs">
+                                  Tech
+                                </Badge>
+                              )}
+                              {v.street_parked === 1 && (
+                                <Badge variant="secondary" className="rounded-full text-xs">
+                                  Street
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Rec. ${v.recommended_price} &middot;{" "}
+                              {v.num_images} photos &middot;{" "}
+                              {v.description} chars description
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            {pred ? (
+                              <div className="text-right">
+                                <div className="text-2xl font-bold tabular-nums text-primary">
+                                  {pred.predicted_reservations}
+                                </div>
+                                <p className="text-[10px] text-muted-foreground">
+                                  reservations (v{pred.model_version})
+                                </p>
+                              </div>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="rounded-full"
+                                onClick={() => handlePredictById(v.vehicle_id)}
+                                disabled={mounted && !health}
+                              >
+                                Predict
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </CardContent>
             </Card>

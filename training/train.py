@@ -1,13 +1,13 @@
 """
 Vroom Forecast — Training Pipeline
 
-Loads vehicle and reservation data, engineers features, trains a Random Forest
-model to predict the number of reservations per vehicle, evaluates with
-cross-validation, logs everything to MLflow, and registers the model.
+Trains a Random Forest model to predict the number of reservations per vehicle.
+Features are read from the offline feature store (Parquet) when --feature-store
+is provided, or computed from raw CSVs as a fallback.
 
 Usage:
-    uv run python train.py [--data-dir DATA_DIR] [--mlflow-uri URI] [--experiment NAME]
-                           [--model-name NAME]
+    uv run python -m training --feature-store /feast-data/vehicle_features.parquet --mlflow-uri URI
+    uv run python -m training --data-dir data --mlflow-uri URI  # fallback, no feature store
 """
 
 import argparse
@@ -46,40 +46,40 @@ RF_PARAMS = {
 }
 
 
-def load_data(data_dir: Path) -> pd.DataFrame:
-    """Load vehicles and reservations, aggregate, and merge."""
-    vehicles_path = data_dir / "vehicles.csv"
-    reservations_path = data_dir / "reservations.csv"
+# ── Data loading ─────────────────────────────────────────────────────────────
 
-    logger.info("Loading vehicles from %s", vehicles_path)
-    vehicles = pd.read_csv(vehicles_path)
-    logger.info("Vehicles shape: %s", vehicles.shape)
 
-    logger.info("Loading reservations from %s", reservations_path)
-    reservations = pd.read_csv(reservations_path, parse_dates=["created_at"])
-    logger.info("Reservations shape: %s", reservations.shape)
+def load_from_feature_store(parquet_path: str) -> pd.DataFrame:
+    """Load pre-computed features from the offline feature store (Parquet).
+
+    The Parquet file is written by the feature materialization pipeline and
+    contains all raw + derived features and the label.
+    """
+    df = pd.read_parquet(parquet_path)
+    logger.info("Loaded %d rows from feature store (%s).", len(df), parquet_path)
+    return df
+
+
+def load_from_csv(data_dir: Path) -> pd.DataFrame:
+    """Load from raw CSVs, aggregate reservations, and compute features (fallback)."""
+    vehicles = pd.read_csv(data_dir / "vehicles.csv")
+    reservations = pd.read_csv(data_dir / "reservations.csv", parse_dates=["created_at"])
 
     res_counts: pd.DataFrame = (
-        reservations.groupby("vehicle_id").size().reset_index(name=TARGET_COL)  # ty: ignore[no-matching-overload]  # pandas stub limitation
+        reservations.groupby("vehicle_id").size().reset_index(name=TARGET_COL)  # ty: ignore[no-matching-overload]
     )
 
     df = vehicles.merge(res_counts, on="vehicle_id", how="left")
     df[TARGET_COL] = df[TARGET_COL].fillna(0).astype(int)
 
-    logger.info(
-        "Merged dataset: %d vehicles, %d with 0 reservations",
-        len(df),
-        (df[TARGET_COL] == 0).sum(),
-    )
-    return df
-
-
-def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add derived pricing features."""
-    df = df.copy()
     df["price_diff"] = df["actual_price"] - df["recommended_price"]
     df["price_ratio"] = df["actual_price"] / df["recommended_price"]
+
+    logger.info("Loaded %d rows from CSV (fallback).", len(df))
     return df
+
+
+# ── Training ─────────────────────────────────────────────────────────────────
 
 
 def train_and_evaluate(
@@ -109,11 +109,13 @@ def train_and_evaluate(
         "train_r2": r2_score(y, preds),
     }
 
-    # Per-feature importances
     for feat, imp in zip(X.columns, model.feature_importances_, strict=True):
         metrics[f"importance_{feat}"] = imp
 
     return model, metrics
+
+
+# ── Model registration ───────────────────────────────────────────────────────
 
 
 def register_model(run_id: str, model_name: str) -> str:
@@ -121,7 +123,6 @@ def register_model(run_id: str, model_name: str) -> str:
     client = mlflow.MlflowClient()
     model_uri = f"runs:/{run_id}/model"
 
-    # Ensure the registered model exists
     try:
         client.get_registered_model(model_name)
     except mlflow.exceptions.MlflowException:
@@ -137,18 +138,28 @@ def register_model(run_id: str, model_name: str) -> str:
     return mv.version
 
 
-def run(data_dir: Path, mlflow_uri: str, experiment_name: str, model_name: str) -> str:
-    """Full training pipeline.
+# ── Pipeline ─────────────────────────────────────────────────────────────────
 
-    Returns the registered model version string.
-    """
+
+def run(
+    mlflow_uri: str,
+    experiment_name: str,
+    model_name: str,
+    feature_store: str | None = None,
+    data_dir: Path | None = None,
+) -> str:
+    """Full training pipeline. Returns the registered model version string."""
     mlflow.set_tracking_uri(mlflow_uri)
     mlflow.set_experiment(experiment_name)
     logger.info("MLflow tracking URI: %s", mlflow_uri)
     logger.info("MLflow experiment: %s", experiment_name)
 
-    df = load_data(data_dir)
-    df = engineer_features(df)
+    if feature_store:
+        df = load_from_feature_store(feature_store)
+    elif data_dir:
+        df = load_from_csv(data_dir)
+    else:
+        raise ValueError("Either --feature-store or --data-dir must be provided.")
 
     X = df[FEATURE_COLS]
     y = df[TARGET_COL]
@@ -157,6 +168,7 @@ def run(data_dir: Path, mlflow_uri: str, experiment_name: str, model_name: str) 
         mlflow.log_params(RF_PARAMS)
         mlflow.set_tag("model_type", "RandomForestRegressor")
         mlflow.set_tag("pipeline", "train.py")
+        mlflow.set_tag("feature_source", "feature_store" if feature_store else "csv")
 
         model, metrics = train_and_evaluate(X, y, RF_PARAMS)
 
@@ -165,9 +177,9 @@ def run(data_dir: Path, mlflow_uri: str, experiment_name: str, model_name: str) 
 
         mlflow.sklearn.log_model(model, artifact_path="model", input_example=X.head(1))
 
-        run_id = mlflow.active_run()
-        assert run_id is not None, "No active MLflow run"
-        run_id = run_id.info.run_id
+        active_run = mlflow.active_run()
+        assert active_run is not None, "No active MLflow run"
+        run_id = active_run.info.run_id
         logger.info("Run ID: %s", run_id)
 
     version = register_model(run_id, model_name)
@@ -182,10 +194,16 @@ def run(data_dir: Path, mlflow_uri: str, experiment_name: str, model_name: str) 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Vroom Forecast training pipeline")
     parser.add_argument(
+        "--feature-store",
+        type=str,
+        default=None,
+        help="Path to the offline feature store Parquet file",
+    )
+    parser.add_argument(
         "--data-dir",
         type=Path,
-        default=Path("data"),
-        help="Directory containing vehicles.csv and reservations.csv",
+        default=None,
+        help="Directory with vehicles.csv + reservations.csv (fallback if no --feature-store)",
     )
     parser.add_argument(
         "--mlflow-uri",

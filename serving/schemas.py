@@ -57,3 +57,33 @@ class HealthResponse(BaseModel):
     model_name: str
     model_version: str
     mlflow_uri: str
+    feast_online: bool
+
+
+class VehicleIdRequest(BaseModel):
+    """Predict by vehicle ID — features are looked up from the online store (Redis)."""
+
+    vehicle_id: int = Field(..., gt=0, description="Vehicle ID to look up in the feature store")
+
+
+class ReloadResponse(BaseModel):
+    status: str
+    previous_version: str
+    current_version: str
+
+
+class SaveVehicleResponse(BaseModel):
+    vehicle_id: int
+    status: str
+
+
+class VehicleRecord(BaseModel):
+    """A stored vehicle with its ID and attributes."""
+
+    vehicle_id: int
+    technology: int
+    actual_price: float
+    recommended_price: float
+    num_images: int
+    street_parked: int
+    description: int

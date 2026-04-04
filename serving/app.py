@@ -3,6 +3,10 @@ Vroom Forecast — Prediction Serving API
 
 FastAPI application and route definitions. Model loading, feature engineering,
 and schemas live in their own modules.
+
+Supports two prediction modes:
+  - POST /predict — raw vehicle attributes (features computed on the fly)
+  - POST /predict/id — vehicle ID lookup from the Feast online store (Redis)
 """
 
 from __future__ import annotations
@@ -17,28 +21,44 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from serving.config import settings
 from serving.features import FEATURE_COLS, engineer_features
-from serving.model import get_model, get_model_version, load_champion, predict
+from serving.model import (
+    feast_available,
+    get_model,
+    get_model_version,
+    init_feast,
+    load_champion,
+    predict_from_features,
+    predict_from_ids,
+    start_reload_listener,
+)
 from serving.schemas import (
     BatchPredictionResponse,
     BenchmarkRequest,
     BenchmarkResponse,
     HealthResponse,
     PredictionResponse,
+    ReloadResponse,
+    SaveVehicleResponse,
     VehicleFeatures,
+    VehicleIdRequest,
+    VehicleRecord,
 )
+from serving.vehicles import list_vehicles, save_vehicle
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
-    """Load the champion model on startup."""
+    """Load the champion model, initialize feature store, and start reload listener."""
     load_champion()
+    init_feast()
+    start_reload_listener()
     yield
 
 
 app = FastAPI(
     title="Vroom Forecast API",
     description="Predicts the number of reservations for a vehicle based on its attributes.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -55,7 +75,7 @@ app.add_middleware(
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    """Liveness check with model info."""
+    """Liveness check with model info and feature store status."""
     if get_model() is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     return HealthResponse(
@@ -63,15 +83,66 @@ def health() -> HealthResponse:
         model_name=settings.model_name,
         model_version=get_model_version(),
         mlflow_uri=settings.mlflow_uri,
+        feast_online=feast_available(),
     )
+
+
+@app.post("/reload", response_model=ReloadResponse)
+def reload_model() -> ReloadResponse:
+    """Reload the champion model from MLflow."""
+    previous = get_model_version()
+    load_champion()
+    current = get_model_version()
+    return ReloadResponse(
+        status="reloaded" if current != previous else "unchanged",
+        previous_version=previous,
+        current_version=current,
+    )
+
+
+# ── Vehicle management ───────────────────────────────────────────────────────
+
+
+@app.post("/vehicles", response_model=SaveVehicleResponse)
+def save_vehicle_endpoint(vehicle: VehicleFeatures) -> SaveVehicleResponse:
+    """Save a vehicle to the database and push its features to Redis.
+
+    The vehicle gets an auto-incremented ID and can be used with /predict/id.
+    Features are immediately available in Redis — no materialization needed.
+    """
+    vehicle_id = save_vehicle(vehicle)
+    return SaveVehicleResponse(vehicle_id=vehicle_id, status="saved")
+
+
+@app.get("/vehicles", response_model=list[VehicleRecord])
+def list_vehicles_endpoint() -> list[VehicleRecord]:
+    """List all saved vehicles."""
+    return list_vehicles()
+
+
+# ── Prediction ───────────────────────────────────────────────────────────────
 
 
 @app.post("/predict", response_model=PredictionResponse)
 def predict_single(vehicle: VehicleFeatures) -> PredictionResponse:
-    """Predict reservation count for a single vehicle."""
+    """Predict reservation count from raw vehicle attributes (features computed on the fly)."""
     if get_model() is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
-    predictions = predict([vehicle])
+    predictions = predict_from_features([vehicle])
+    return PredictionResponse(
+        predicted_reservations=round(predictions[0], 2),
+        model_version=get_model_version(),
+    )
+
+
+@app.post("/predict/id", response_model=PredictionResponse)
+def predict_by_id(req: VehicleIdRequest) -> PredictionResponse:
+    """Predict reservation count by vehicle ID (features from the online store)."""
+    if get_model() is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+    if not feast_available():
+        raise HTTPException(status_code=503, detail="Feature store not configured")
+    predictions = predict_from_ids([req.vehicle_id])
     return PredictionResponse(
         predicted_reservations=round(predictions[0], 2),
         model_version=get_model_version(),
@@ -80,7 +151,7 @@ def predict_single(vehicle: VehicleFeatures) -> PredictionResponse:
 
 @app.post("/predict/batch", response_model=BatchPredictionResponse)
 def predict_batch(vehicles: list[VehicleFeatures]) -> BatchPredictionResponse:
-    """Predict reservation counts for multiple vehicles."""
+    """Predict reservation counts for multiple vehicles (features computed on the fly)."""
     if get_model() is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     if len(vehicles) > 1000:
@@ -88,7 +159,7 @@ def predict_batch(vehicles: list[VehicleFeatures]) -> BatchPredictionResponse:
     if len(vehicles) == 0:
         return BatchPredictionResponse(predictions=[])
 
-    predictions = predict(vehicles)
+    predictions = predict_from_features(vehicles)
     return BatchPredictionResponse(
         predictions=[
             PredictionResponse(
