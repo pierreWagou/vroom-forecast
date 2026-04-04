@@ -42,7 +42,7 @@ def load_champion() -> None:
         _model_version,
         model_uri,
     )
-    _model = mlflow.sklearn.load_model(model_uri)  # ty: ignore[possibly-unbound]
+    _model = mlflow.sklearn.load_model(model_uri)
     logger.info("Model loaded successfully.")
 
 

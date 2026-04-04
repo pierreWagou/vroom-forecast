@@ -85,6 +85,8 @@ def predict_batch(vehicles: list[VehicleFeatures]) -> BatchPredictionResponse:
         raise HTTPException(status_code=503, detail="Model not loaded")
     if len(vehicles) > 1000:
         raise HTTPException(status_code=400, detail="Max 1000 vehicles per batch")
+    if len(vehicles) == 0:
+        return BatchPredictionResponse(predictions=[])
 
     predictions = predict(vehicles)
     return BatchPredictionResponse(

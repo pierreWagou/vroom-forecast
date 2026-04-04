@@ -1,5 +1,5 @@
 [project]
-name = "vroom-forecast-serving"
+name = "serving"
 version = "0.1.0"
 description = "FastAPI prediction service for vroom-forecast"
 requires-python = ">=3.12"
@@ -12,3 +12,9 @@ dependencies = [
     "pandas>=2.2",
     "numpy>=2.2",
 ]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "httpx>=0.28"]
+
+[tool.pytest.ini_options]
+pythonpath = [".."]

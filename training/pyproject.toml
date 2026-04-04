@@ -1,5 +1,5 @@
 [project]
-name = "vroom-forecast-training"
+name = "training"
 version = "0.1.0"
 description = "ML training pipeline for vroom-forecast"
 requires-python = ">=3.12"
@@ -9,3 +9,9 @@ dependencies = [
     "mlflow>=2.21",
     "numpy>=2.2",
 ]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

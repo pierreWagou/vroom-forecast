@@ -1,0 +1,10 @@
+[environment]
+python-version = "3.12"
+
+[src]
+exclude = [
+    "exploration/",   # notebook-style code, not production
+    "airflow/dags/",  # Airflow deps not in local venv
+    "ui/",            # TypeScript project, not Python
+    "**/tests/",      # test code — pytest handles validation
+]

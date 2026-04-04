@@ -1,8 +1,14 @@
 [project]
-name = "vroom-forecast-promotion"
+name = "promotion"
 version = "0.1.0"
 description = "Champion/challenger model promotion for vroom-forecast"
 requires-python = ">=3.12"
 dependencies = [
     "mlflow>=2.21",
 ]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

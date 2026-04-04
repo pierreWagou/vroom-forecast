@@ -552,7 +552,9 @@ export default function Home() {
               <CardHeader>
                 <CardTitle className="text-lg">Latency Benchmark</CardTitle>
                 <CardDescription>
-                  Measure model inference performance over 1,000 iterations
+                  Measure pure model inference time over 1,000 iterations.
+                  This is the time spent in <code className="text-xs bg-muted px-1 py-0.5 rounded">model.predict()</code> only
+                  &mdash; excludes HTTP overhead, serialization, and network latency.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -598,41 +600,51 @@ export default function Home() {
                         label: "Average",
                         value: benchmarkResult.avg_latency_ms,
                         highlight: true,
+                        desc: "Arithmetic mean of all predictions. Use for capacity planning.",
                       },
                       {
                         label: "p50 (median)",
                         value: benchmarkResult.p50_latency_ms,
                         highlight: false,
+                        desc: "Half of predictions are faster than this. Robust to outliers.",
                       },
                       {
                         label: "p95",
                         value: benchmarkResult.p95_latency_ms,
                         highlight: false,
+                        desc: "95% of predictions are faster. Typical SLO target.",
                       },
                       {
                         label: "p99",
                         value: benchmarkResult.p99_latency_ms,
                         highlight: false,
+                        desc: "Tail latency. A large p95\u2013p99 gap signals instability.",
                       },
-                    ].map(({ label, value, highlight }) => (
-                      <Card
-                        key={label}
-                        className={`border ${highlight ? "border-primary/20 bg-primary/5" : ""}`}
-                      >
-                        <CardContent className="pt-6 text-center">
-                          <div
-                            className={`text-3xl font-bold tabular-nums ${highlight ? "text-primary" : ""}`}
+                    ].map(({ label, value, highlight, desc }) => (
+                      <Tooltip key={label}>
+                        <TooltipTrigger className="w-full text-left">
+                          <Card
+                            className={`border h-full ${highlight ? "border-primary/20 bg-primary/5" : ""}`}
                           >
-                            {value.toFixed(2)}
-                          </div>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {label}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground/60">
-                            ms
-                          </p>
-                        </CardContent>
-                      </Card>
+                            <CardContent className="pt-6 text-center">
+                              <div
+                                className={`text-3xl font-bold tabular-nums ${highlight ? "text-primary" : ""}`}
+                              >
+                                {value.toFixed(2)}
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {label}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground/60">
+                                ms
+                              </p>
+                            </CardContent>
+                          </Card>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-[200px] text-center">
+                          {desc}
+                        </TooltipContent>
+                      </Tooltip>
                     ))}
                   </div>
                 )}

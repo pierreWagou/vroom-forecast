@@ -1,6 +1,6 @@
 ---
-mode: agent
-description: Vroom forecast task — vehicle reservation analysis, model training, and serving pipeline
+name: vroom-forecast
+description: Original take-home task specification — datasets, requirements, and deliverables
 ---
 
 # Vroom Forecast Task
