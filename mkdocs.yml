@@ -1,13 +1,12 @@
 site_name: Vroom Forecast
 site_description: ML pipeline predicting vehicle reservations — Staff MLOps take-home for Turo
-site_url: http://localhost:8100/
+site_url: https://wagou.github.io/vroom-forecast/
 repo_url: https://github.com/wagou/vroom-forecast
 repo_name: wagou/vroom-forecast
 
 theme:
   name: material
   language: en
-  custom_dir: docs/overrides
   logo: assets/logo.svg
   favicon: assets/favicon.svg
   icon:
