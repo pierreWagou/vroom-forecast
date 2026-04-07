@@ -16,3 +16,5 @@ procs:
     cwd: "ui"
   jupyter:
     cmd: ["uv", "run", "--project", "exploration", "jupyter", "notebook", "--no-browser", "--port=8888"]
+  docs:
+    shell: "uvx --with mkdocs-material mkdocs serve --dev-addr 127.0.0.1:8100"

@@ -26,6 +26,8 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -59,6 +61,9 @@ services:
       - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
       - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
       - AIRFLOW__WEBSERVER__SECRET_KEY=vroom-forecast-dev-key
+      # Feast env vars for feature_store.yaml
+      - FEAST_REGISTRY=/feast-data/registry.db
+      - FEAST_REDIS=redis:6379
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./training:/opt/airflow/training
@@ -90,6 +95,11 @@ services:
       - SERVING_MODEL_NAME=vroom-forecast
       - SERVING_FEAST_REPO=/app/feature_repo
       - SERVING_REDIS_URL=redis://redis:6379
+      - SERVING_DB_PATH=/feast-data/vehicles.db
+      - SERVING_OFFLINE_STORE_PATH=/feast-data/vehicle_features.parquet
+      # Feast env vars for feature_store.yaml (mounted read-only)
+      - FEAST_REGISTRY=/feast-data/registry.db
+      - FEAST_REDIS=redis:6379
     volumes:
       - ./mlartifacts:/mlartifacts
       - ./feast-data:/feast-data
@@ -100,3 +110,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+
+volumes:
+  redis-data:

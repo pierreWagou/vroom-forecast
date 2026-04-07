@@ -6,7 +6,6 @@ requires-python = ">=3.12"
 dependencies = [
     "feast[redis]>=0.61",
     "pandas>=2.2",
-    "numpy>=2.2",
 ]
 
 [dependency-groups]

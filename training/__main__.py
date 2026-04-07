@@ -9,6 +9,5 @@ if __name__ == "__main__":
         experiment_name=args.experiment,
         model_name=args.model_name,
         feature_store=args.feature_store,
-        data_dir=args.data_dir,
     )
     print(version)

@@ -112,3 +112,185 @@ class TestSchemaContract:
         assert "materialized" in fields
         assert "price_diff" in fields
         assert "price_ratio" in fields
+        assert "store" in fields
+
+    def test_computed_features_store_literal(self) -> None:
+        from serving.schemas import ComputedFeatures
+
+        feat = ComputedFeatures(vehicle_id=1, store="offline")
+        assert feat.store == "offline"
+        feat = ComputedFeatures(vehicle_id=1, store="online")
+        assert feat.store == "online"
+        feat = ComputedFeatures(vehicle_id=1)
+        assert feat.store == "none"
+
+    def test_save_vehicle_response_fields(self) -> None:
+        from serving.schemas import SaveVehicleResponse
+
+        fields = set(SaveVehicleResponse.model_fields.keys())
+        assert {"vehicle_id", "status", "event_published"} == fields
+
+    def test_vehicle_record_fields(self) -> None:
+        from serving.schemas import VehicleRecord
+
+        fields = set(VehicleRecord.model_fields.keys())
+        expected = {
+            "vehicle_id",
+            "technology",
+            "actual_price",
+            "recommended_price",
+            "num_images",
+            "street_parked",
+            "description",
+            "source",
+            "num_reservations",
+        }
+        assert expected == fields
+
+    def test_vehicle_record_nullable_reservations(self) -> None:
+        from serving.schemas import VehicleRecord
+
+        # Fleet vehicle: observed count (including 0)
+        fleet = VehicleRecord(
+            vehicle_id=1,
+            technology=1,
+            actual_price=45,
+            recommended_price=50,
+            num_images=5,
+            street_parked=0,
+            description=100,
+            num_reservations=0,
+        )
+        assert fleet.num_reservations == 0
+
+        # New arrival: no observation
+        arrival = VehicleRecord(
+            vehicle_id=2,
+            technology=1,
+            actual_price=45,
+            recommended_price=50,
+            num_images=5,
+            street_parked=0,
+            description=100,
+        )
+        assert arrival.num_reservations is None
+
+    def test_benchmark_by_id_request_fields(self) -> None:
+        from serving.schemas import BenchmarkByIdRequest
+
+        fields = set(BenchmarkByIdRequest.model_fields.keys())
+        assert {"n_iterations", "vehicle_id"} == fields
+
+
+# ── Feature engineering: benchmark helper ────────────────────────────────────
+
+
+class TestEngineerFeaturesBenchmark:
+    """Test that engineer_features works correctly in a loop (benchmark path)."""
+
+    def test_repeated_compute_is_deterministic(self) -> None:
+        df = pd.DataFrame([SAMPLE_VEHICLE])
+        results = [engineer_features(df)["price_diff"].iloc[0] for _ in range(10)]
+        assert all(r == pytest.approx(-5.0) for r in results)
+
+
+# ── Offline feature reader ───────────────────────────────────────────────────
+
+
+class TestOfflineFeatureReader:
+    """Test the offline feature reading logic with a real temporary Parquet file.
+
+    OfflineFeatureReader is a @serve.deployment so we can't instantiate it
+    directly in tests. Instead we test the underlying logic: loading a Parquet
+    file and looking up vehicle IDs from the resulting DataFrame.
+    """
+
+    @pytest.fixture()
+    def parquet_df(self, tmp_path: object) -> tuple[str, pd.DataFrame]:
+        import os
+
+        df = pd.DataFrame(
+            [
+                {
+                    "vehicle_id": 1,
+                    "technology": 1,
+                    "actual_price": 45.0,
+                    "recommended_price": 50.0,
+                    "num_images": 8,
+                    "street_parked": 0,
+                    "description": 250,
+                    "price_diff": -5.0,
+                    "price_ratio": 0.9,
+                    "num_reservations": 5,
+                    "event_timestamp": pd.Timestamp("2026-01-01", tz="UTC"),
+                },
+                {
+                    "vehicle_id": 2,
+                    "technology": 0,
+                    "actual_price": 100.0,
+                    "recommended_price": 50.0,
+                    "num_images": 3,
+                    "street_parked": 1,
+                    "description": 100,
+                    "price_diff": 50.0,
+                    "price_ratio": 2.0,
+                    "num_reservations": 12,
+                    "event_timestamp": pd.Timestamp("2026-01-01", tz="UTC"),
+                },
+            ]
+        )
+        path = os.path.join(str(tmp_path), "features.parquet")
+        df.to_parquet(path, index=False)
+        indexed = df.set_index("vehicle_id")
+        return path, indexed
+
+    def test_lookup_found(self, parquet_df: tuple[str, pd.DataFrame]) -> None:
+        _, df = parquet_df
+        mask = df.index.isin([1])
+        assert mask.any()
+        result = df.loc[mask].reset_index()
+        assert len(result) == 1
+        assert result.iloc[0]["vehicle_id"] == 1
+        assert result.iloc[0]["price_diff"] == pytest.approx(-5.0)
+
+    def test_lookup_not_found(self, parquet_df: tuple[str, pd.DataFrame]) -> None:
+        _, df = parquet_df
+        mask = df.index.isin([999])
+        assert not mask.any()
+
+    def test_lookup_partial_match(self, parquet_df: tuple[str, pd.DataFrame]) -> None:
+        _, df = parquet_df
+        mask = df.index.isin([1, 999])
+        result = df.loc[mask].reset_index()
+        assert len(result) == 1
+
+    def test_parquet_loads_correctly(self, parquet_df: tuple[str, pd.DataFrame]) -> None:
+        path, _ = parquet_df
+        loaded = pd.read_parquet(path).set_index("vehicle_id")
+        assert len(loaded) == 2
+        assert 1 in loaded.index
+        assert 2 in loaded.index
+
+    def test_empty_parquet(self, tmp_path: object) -> None:
+        import os
+
+        df = pd.DataFrame(
+            columns=[
+                "vehicle_id",
+                "technology",
+                "actual_price",
+                "recommended_price",
+                "num_images",
+                "street_parked",
+                "description",
+                "price_diff",
+                "price_ratio",
+                "num_reservations",
+                "event_timestamp",
+            ]
+        )
+        path = os.path.join(str(tmp_path), "empty.parquet")
+        df.to_parquet(path, index=False)
+        loaded = pd.read_parquet(path).set_index("vehicle_id")
+        mask = loaded.index.isin([1])
+        assert not mask.any()

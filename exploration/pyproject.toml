@@ -7,7 +7,6 @@ dependencies = [
     "pandas>=2.2",
     "scikit-learn>=1.6",
     "mlflow>=2.21",
-    "numpy>=2.2",
     "matplotlib>=3.10",
     "seaborn>=0.13",
     "ipykernel>=7.2",

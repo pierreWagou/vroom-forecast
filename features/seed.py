@@ -57,26 +57,27 @@ def seed(data_dir: Path, db_path: str) -> None:
     """Seed the database from CSVs. Skips if already seeded."""
     conn = init_db(db_path)
 
-    # Check if already seeded
-    count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE source = 'csv'").fetchone()[0]
-    if count > 0:
-        logger.info("Database already seeded with %d CSV vehicles — skipping.", count)
+    try:
+        # Check if already seeded
+        count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE source = 'csv'").fetchone()[0]
+        if count > 0:
+            logger.info("Database already seeded with %d CSV vehicles — skipping.", count)
+            return
+
+        # Load and insert vehicles
+        vehicles = pd.read_csv(data_dir / "vehicles.csv")
+        vehicles["source"] = "csv"
+        vehicles.to_sql("vehicles", conn, if_exists="append", index=False)
+        logger.info("Seeded %d vehicles from CSV.", len(vehicles))
+
+        # Load and insert reservations
+        reservations = pd.read_csv(data_dir / "reservations.csv")
+        reservations.to_sql("reservations", conn, if_exists="append", index=False)
+        logger.info("Seeded %d reservations from CSV.", len(reservations))
+
+        conn.commit()
+    finally:
         conn.close()
-        return
-
-    # Load and insert vehicles
-    vehicles = pd.read_csv(data_dir / "vehicles.csv")
-    vehicles["source"] = "csv"
-    vehicles.to_sql("vehicles", conn, if_exists="append", index=False)
-    logger.info("Seeded %d vehicles from CSV.", len(vehicles))
-
-    # Load and insert reservations
-    reservations = pd.read_csv(data_dir / "reservations.csv")
-    reservations.to_sql("reservations", conn, if_exists="append", index=False)
-    logger.info("Seeded %d reservations from CSV.", len(reservations))
-
-    conn.commit()
-    conn.close()
 
 
 def parse_args() -> argparse.Namespace:

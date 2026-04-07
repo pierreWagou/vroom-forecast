@@ -51,9 +51,14 @@ def _notify_promoted(redis_url: str | None, model_name: str, version: str) -> No
 
     try:
         r = redis.from_url(redis_url)
-        payload = json.dumps({"model_name": model_name, "version": version})
-        listeners = r.publish(REDIS_CHANNEL, payload)
-        logger.info("Published promotion event to '%s' (%d listeners).", REDIS_CHANNEL, listeners)
+        try:
+            payload = json.dumps({"model_name": model_name, "version": version})
+            listeners = r.publish(REDIS_CHANNEL, payload)
+            logger.info(
+                "Published promotion event to '%s' (%d listeners).", REDIS_CHANNEL, listeners
+            )
+        finally:
+            r.close()
     except Exception:
         logger.exception("Failed to publish promotion event to Redis.")
 
@@ -78,7 +83,8 @@ def promote(
 
     # Fetch candidate metrics
     candidate_mv = client.get_model_version(model_name, version)
-    assert candidate_mv.run_id is not None, f"Model version {version} has no associated run"
+    if candidate_mv.run_id is None:
+        raise ValueError(f"Model version {version} has no associated run")
     candidate_run = client.get_run(candidate_mv.run_id)
     candidate_metric = candidate_run.data.metrics.get(metric_name)
 
@@ -101,7 +107,8 @@ def promote(
     # Check if there is a current champion
     try:
         champion_mv = client.get_model_version_by_alias(model_name, CHAMPION_ALIAS)
-        assert champion_mv.run_id is not None, "Champion version has no associated run"
+        if champion_mv.run_id is None:
+            raise ValueError(f"Champion version {champion_mv.version} has no associated run")
         champion_run = client.get_run(champion_mv.run_id)
         champion_metric = champion_run.data.metrics.get(metric_name)
 
@@ -142,8 +149,10 @@ def promote(
             )
             return False
 
-    except mlflow.exceptions.MlflowException:
-        # No champion yet
+    except mlflow.exceptions.MlflowException as exc:
+        if getattr(exc, "error_code", "") != "RESOURCE_DOES_NOT_EXIST":
+            raise  # Re-raise unexpected errors (e.g. network failures)
+        # No champion alias yet — promote as first champion
         client.set_registered_model_alias(model_name, CHAMPION_ALIAS, version)
         logger.info(
             "No existing champion. Version %s promoted as first champion.",

@@ -1,4 +1,9 @@
-"""Feature engineering — must stay in sync with training/train.py."""
+"""Feature engineering for the serving layer.
+
+Derived features (price_diff, price_ratio) must stay in sync with
+features/pipeline.py and training/train.py. The canonical definitions
+are in features/feature_repo/definitions.py.
+"""
 
 import pandas as pd
 

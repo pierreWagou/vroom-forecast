@@ -8,7 +8,6 @@ import pytest
 from train import (
     FEATURE_COLS,
     TARGET_COL,
-    load_from_csv,
     load_from_feature_store,
     train_and_evaluate,
 )
@@ -17,9 +16,9 @@ from train import (
 
 
 @pytest.fixture
-def data_dir(tmp_path: Path) -> Path:
-    """Create minimal CSV files for testing."""
-    vehicles = pd.DataFrame(
+def sample_df() -> pd.DataFrame:
+    """Create a minimal DataFrame with all features + target."""
+    df = pd.DataFrame(
         {
             "vehicle_id": [1, 2, 3, 4],
             "technology": [1, 0, 1, 0],
@@ -28,55 +27,20 @@ def data_dir(tmp_path: Path) -> Path:
             "num_images": [8, 2, 15, 0],
             "street_parked": [0, 1, 0, 1],
             "description": [250, 50, 400, 10],
+            "num_reservations": [3, 1, 2, 0],
         }
     )
-    reservations = pd.DataFrame(
-        {
-            "vehicle_id": [1, 1, 1, 2, 3, 3],
-            "created_at": pd.to_datetime(["2025-01-01"] * 6),
-        }
-    )
-    vehicles.to_csv(tmp_path / "vehicles.csv", index=False)
-    reservations.to_csv(tmp_path / "reservations.csv", index=False)
-    return tmp_path
+    df["price_diff"] = df["actual_price"] - df["recommended_price"]
+    df["price_ratio"] = df["actual_price"] / df["recommended_price"]
+    return df
 
 
 @pytest.fixture
-def df_from_csv(data_dir: Path) -> pd.DataFrame:
-    return load_from_csv(data_dir)
-
-
-@pytest.fixture
-def parquet_path(df_from_csv: pd.DataFrame, tmp_path: Path) -> str:
-    """Write a Parquet feature store file from the CSV data."""
+def parquet_path(sample_df: pd.DataFrame, tmp_path: Path) -> str:
+    """Write a Parquet feature store file from sample data."""
     path = str(tmp_path / "features.parquet")
-    df_from_csv.to_parquet(path, index=False)
+    sample_df.to_parquet(path, index=False)
     return path
-
-
-# ── load_from_csv ────────────────────────────────────────────────────────────
-
-
-class TestLoadFromCsv:
-    def test_all_feature_cols_present(self, df_from_csv: pd.DataFrame) -> None:
-        for col in FEATURE_COLS:
-            assert col in df_from_csv.columns, f"Missing feature column: {col}"
-
-    def test_target_col_present(self, df_from_csv: pd.DataFrame) -> None:
-        assert TARGET_COL in df_from_csv.columns
-
-    def test_price_diff(self, df_from_csv: pd.DataFrame) -> None:
-        expected = df_from_csv["actual_price"] - df_from_csv["recommended_price"]
-        pd.testing.assert_series_equal(df_from_csv["price_diff"], expected, check_names=False)
-
-    def test_price_ratio(self, df_from_csv: pd.DataFrame) -> None:
-        expected = df_from_csv["actual_price"] / df_from_csv["recommended_price"]
-        pd.testing.assert_series_equal(df_from_csv["price_ratio"], expected, check_names=False)
-
-    def test_zero_reservations_filled(self, df_from_csv: pd.DataFrame) -> None:
-        # Vehicle 4 has no reservations
-        row = df_from_csv[df_from_csv["vehicle_id"] == 4].iloc[0]
-        assert row[TARGET_COL] == 0
 
 
 # ── load_from_feature_store ──────────────────────────────────────────────────
@@ -101,9 +65,9 @@ class TestLoadFromFeatureStore:
 
 
 class TestTrainAndEvaluate:
-    def test_returns_model_and_metrics(self, df_from_csv: pd.DataFrame) -> None:
-        X = df_from_csv[FEATURE_COLS]
-        y = df_from_csv[TARGET_COL]
+    def test_returns_model_and_metrics(self, sample_df: pd.DataFrame) -> None:
+        X = sample_df[FEATURE_COLS]
+        y = sample_df[TARGET_COL]
         params = {"n_estimators": 10, "max_depth": 3, "random_state": 42, "n_jobs": 1}
 
         model, metrics = train_and_evaluate(X, y, params, cv_folds=2)
@@ -112,9 +76,9 @@ class TestTrainAndEvaluate:
         preds = model.predict(X)
         assert len(preds) == len(y)
 
-    def test_metrics_keys(self, df_from_csv: pd.DataFrame) -> None:
-        X = df_from_csv[FEATURE_COLS]
-        y = df_from_csv[TARGET_COL]
+    def test_metrics_keys(self, sample_df: pd.DataFrame) -> None:
+        X = sample_df[FEATURE_COLS]
+        y = sample_df[TARGET_COL]
         params = {"n_estimators": 10, "max_depth": 3, "random_state": 42, "n_jobs": 1}
 
         _, metrics = train_and_evaluate(X, y, params, cv_folds=2)
@@ -125,9 +89,9 @@ class TestTrainAndEvaluate:
         assert "train_rmse" in metrics
         assert "train_r2" in metrics
 
-    def test_feature_importances_logged(self, df_from_csv: pd.DataFrame) -> None:
-        X = df_from_csv[FEATURE_COLS]
-        y = df_from_csv[TARGET_COL]
+    def test_feature_importances_logged(self, sample_df: pd.DataFrame) -> None:
+        X = sample_df[FEATURE_COLS]
+        y = sample_df[TARGET_COL]
         params = {"n_estimators": 10, "max_depth": 3, "random_state": 42, "n_jobs": 1}
 
         _, metrics = train_and_evaluate(X, y, params, cv_folds=2)
@@ -137,9 +101,9 @@ class TestTrainAndEvaluate:
             assert key in metrics, f"Missing importance metric: {key}"
             assert 0.0 <= metrics[key] <= 1.0
 
-    def test_metrics_are_finite(self, df_from_csv: pd.DataFrame) -> None:
-        X = df_from_csv[FEATURE_COLS]
-        y = df_from_csv[TARGET_COL]
+    def test_metrics_are_finite(self, sample_df: pd.DataFrame) -> None:
+        X = sample_df[FEATURE_COLS]
+        y = sample_df[TARGET_COL]
         params = {"n_estimators": 10, "max_depth": 3, "random_state": 42, "n_jobs": 1}
 
         _, metrics = train_and_evaluate(X, y, params, cv_folds=2)

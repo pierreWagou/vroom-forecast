@@ -12,6 +12,7 @@ from serving.model import (
     FeatureLookup,
     FeatureMaterializer,
     ModelReloadListener,
+    OfflineFeatureReader,
     Predictor,
 )
 
@@ -29,12 +30,16 @@ def main() -> None:
     predictor = Predictor.bind()
     feature_computer = FeatureComputer.bind()
     feature_lookup = FeatureLookup.bind()
-    ingress = VroomForecastApp.bind(predictor, feature_computer, feature_lookup)
+    offline_reader = OfflineFeatureReader.bind()
+    ingress = VroomForecastApp.bind(predictor, feature_computer, feature_lookup, offline_reader)
 
     serve.run(ingress, name="vroom-forecast")
 
-    # Get a handle to the Predictor for the reload listener
-    predictor_handle = serve.get_app_handle("vroom-forecast")
+    # Get a handle to the Predictor for the reload listener.
+    # serve.get_deployment_handle() returns a handle to a specific deployment,
+    # not the ingress — this is needed for the ModelReloadListener to call
+    # Predictor.reload() directly.
+    predictor_handle = serve.get_deployment_handle("Predictor", "vroom-forecast")
 
     # Start background Ray actors (not Serve deployments — they don't handle HTTP)
     # 1. Feature materializer: subscribes to vehicle-saved events, writes to Feast

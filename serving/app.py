@@ -8,7 +8,9 @@ and FeatureLookup deployments.
 
 from __future__ import annotations
 
-import time
+import asyncio
+import json
+from collections.abc import AsyncGenerator
 
 import numpy as np
 import pandas as pd
@@ -16,6 +18,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from ray import serve
 from ray.serve.handle import DeploymentHandle
+from starlette.responses import StreamingResponse
 
 from serving.config import settings
 from serving.schemas import (
@@ -32,7 +35,7 @@ from serving.schemas import (
     VehicleIdRequest,
     VehicleRecord,
 )
-from serving.vehicles import list_vehicles, save_vehicle
+from serving.vehicles import delete_vehicle, list_vehicles, save_vehicle
 
 app = FastAPI(
     title="Vroom Forecast API",
@@ -58,10 +61,12 @@ class VroomForecastApp:
         predictor: DeploymentHandle,
         feature_computer: DeploymentHandle,
         feature_lookup: DeploymentHandle,
+        offline_reader: DeploymentHandle,
     ) -> None:
         self.predictor = predictor
         self.feature_computer = feature_computer
         self.feature_lookup = feature_lookup
+        self.offline_reader = offline_reader
 
     @app.get("/health", response_model=HealthResponse)
     async def health(self) -> HealthResponse:
@@ -70,8 +75,9 @@ class VroomForecastApp:
             raise HTTPException(status_code=503, detail="Model not loaded")
         version = await self.predictor.get_version.remote()
         feast_online = await self.feature_lookup.is_available.remote()
+        status = "ok" if feast_online else "degraded"
         return HealthResponse(
-            status="ok",
+            status=status,
             model_name=settings.model_name,
             model_version=version,
             mlflow_uri=settings.mlflow_uri,
@@ -87,29 +93,249 @@ class VroomForecastApp:
             current_version=current,
         )
 
+    @app.get("/stores")
+    async def store_info(self) -> dict:
+        """Operational info about both feature stores."""
+        import os
+
+        # Offline store info
+        offline_available = await self.offline_reader.is_available.remote()
+        offline_info: dict = {"available": offline_available, "type": "file (Parquet)"}
+        if offline_available and settings.offline_store_path:
+            try:
+                stat = os.stat(settings.offline_store_path)
+                offline_info["path"] = settings.offline_store_path
+                offline_info["size_bytes"] = stat.st_size
+                offline_info["last_modified"] = stat.st_mtime
+            except OSError:
+                pass
+
+        # Online store info
+        feast_online = await self.feature_lookup.is_available.remote()
+        online_info: dict = {"available": feast_online, "type": "redis"}
+        if feast_online and settings.redis_url:
+            try:
+                import redis as redis_lib
+
+                r = redis_lib.from_url(settings.redis_url)
+                try:
+                    info = r.info("memory")
+                    online_info["used_memory_human"] = info.get("used_memory_human", "?")
+                    online_info["keys"] = r.dbsize()
+                    online_info["redis_url"] = settings.redis_url
+                finally:
+                    r.close()
+            except Exception:
+                pass
+
+        # Feature view definition
+        feature_view = {
+            "name": "vehicle_features",
+            "entity": "vehicle",
+            "entity_key": "vehicle_id",
+            "features": [
+                "technology",
+                "actual_price",
+                "recommended_price",
+                "num_images",
+                "street_parked",
+                "description",
+                "price_diff",
+                "price_ratio",
+            ],
+            "label": "num_reservations",
+            "ttl_days": 365,
+        }
+
+        return {
+            "offline_store": offline_info,
+            "online_store": online_info,
+            "feature_view": feature_view,
+        }
+
+    @app.get("/events")
+    async def events(self) -> StreamingResponse:
+        """SSE endpoint — streams model-promoted events from Redis pub/sub.
+
+        The UI subscribes via EventSource to get notified when a new champion
+        is promoted, without polling. Falls back gracefully if Redis is not
+        configured (stream stays open but silent).
+        """
+        predictor_handle = self.predictor
+
+        async def event_stream() -> AsyncGenerator[str, None]:
+            import redis
+
+            if settings.redis_url is None:
+                # Keep connection open but idle — the UI will just wait
+                while True:
+                    await asyncio.sleep(60)
+                return
+
+            r = redis.from_url(settings.redis_url)
+            pubsub = r.pubsub()
+            from serving.model import MODEL_PROMOTED_CHANNEL
+
+            pubsub.subscribe(MODEL_PROMOTED_CHANNEL)
+
+            try:
+                while True:
+                    message = pubsub.get_message(timeout=1.0)
+                    if message and message["type"] == "message":
+                        data = json.loads(message["data"])
+                        # Fetch the actual loaded version from the Predictor
+                        version = await predictor_handle.get_version.remote()
+                        event_data = {
+                            "type": "model-promoted",
+                            "model_version": version,
+                            "promoted_version": data.get("version", ""),
+                        }
+                        yield f"data: {json.dumps(event_data)}\n\n"
+                    else:
+                        # Send a keepalive comment every second to detect broken connections
+                        yield ": keepalive\n\n"
+                    await asyncio.sleep(0.5)
+            finally:
+                pubsub.close()
+                r.close()
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     @app.post("/vehicles", response_model=SaveVehicleResponse)
     async def save_vehicle_endpoint(self, vehicle: VehicleFeatures) -> SaveVehicleResponse:
-        import asyncio
+        vehicle_id, event_published = await asyncio.to_thread(save_vehicle, vehicle)
+        return SaveVehicleResponse(
+            vehicle_id=vehicle_id, status="saved", event_published=event_published
+        )
 
-        vehicle_id = await asyncio.to_thread(save_vehicle, vehicle)
-        return SaveVehicleResponse(vehicle_id=vehicle_id, status="saved")
+    @app.delete("/vehicles/{vehicle_id}")
+    async def delete_vehicle_endpoint(self, vehicle_id: int) -> dict[str, str]:
+        """Delete a new arrival vehicle. Fleet vehicles cannot be deleted."""
+        deleted = await asyncio.to_thread(delete_vehicle, vehicle_id)
+        if not deleted:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Vehicle {vehicle_id} not found or is a fleet vehicle (cannot delete).",
+            )
+        return {"status": "deleted", "vehicle_id": str(vehicle_id)}
 
     @app.get("/vehicles", response_model=list[VehicleRecord])
     async def list_vehicles_endpoint(self) -> list[VehicleRecord]:
-        import asyncio
-
         return await asyncio.to_thread(list_vehicles)
+
+    @app.get("/vehicles/features", response_model=list[ComputedFeatures])
+    async def list_vehicle_features(self) -> list[ComputedFeatures]:
+        """Get computed features for all vehicles in a single call.
+
+        Checks the offline store (Parquet) first for all vehicles. Any vehicles
+        not found in the offline store are looked up in the online store (Redis)
+        as a fallback — these are recently-saved vehicles whose features haven't
+        been included in the batch pipeline yet.
+        """
+        vehicles = await asyncio.to_thread(list_vehicles)
+        if not vehicles:
+            return []
+
+        all_ids = [v.vehicle_id for v in vehicles]
+        results: dict[int, ComputedFeatures] = {}
+
+        # Step 1: Try offline store (Parquet) for all vehicles
+        offline_available = await self.offline_reader.is_available.remote()
+        if offline_available:
+            df = await self.offline_reader.lookup.remote(all_ids)
+            if df is not None:
+                for _, row in df.iterrows():
+                    vid = int(row["vehicle_id"])
+                    results[vid] = ComputedFeatures(
+                        vehicle_id=vid,
+                        technology=int(row["technology"]),
+                        actual_price=float(row["actual_price"]),
+                        recommended_price=float(row["recommended_price"]),
+                        num_images=int(row["num_images"]),
+                        street_parked=int(row["street_parked"]),
+                        description=int(row["description"]),
+                        price_diff=float(row["price_diff"]),
+                        price_ratio=float(row["price_ratio"]),
+                        materialized=True,
+                        store="offline",
+                    )
+
+        # Step 2: Fallback to online store (Redis) for missing vehicles
+        missing_ids = [vid for vid in all_ids if vid not in results]
+        if missing_ids:
+            feast_online = await self.feature_lookup.is_available.remote()
+            if feast_online:
+                try:
+                    df = await self.feature_lookup.lookup.remote(missing_ids)
+                    for _, row in df.iterrows():
+                        vid = int(row["vehicle_id"])
+                        if pd.isna(row.get("technology")):
+                            results[vid] = ComputedFeatures(vehicle_id=vid)
+                        else:
+                            results[vid] = ComputedFeatures(
+                                vehicle_id=vid,
+                                technology=int(row["technology"]),
+                                actual_price=float(row["actual_price"]),
+                                recommended_price=float(row["recommended_price"]),
+                                num_images=int(row["num_images"]),
+                                street_parked=int(row["street_parked"]),
+                                description=int(row["description"]),
+                                price_diff=float(row["price_diff"]),
+                                price_ratio=float(row["price_ratio"]),
+                                materialized=True,
+                                store="online",
+                            )
+                except Exception:
+                    pass  # vehicles stay missing — not materialized
+
+        return list(results.values())
 
     @app.get("/vehicles/{vehicle_id}/features", response_model=ComputedFeatures)
     async def get_vehicle_features(self, vehicle_id: int) -> ComputedFeatures:
-        """Get the computed features from the online store for a saved vehicle."""
+        """Get computed features for a vehicle.
+
+        Checks the offline store (Parquet) first — this contains all vehicles
+        after the batch pipeline has run. Falls back to the online store (Redis)
+        for recently-saved vehicles not yet in the Parquet.
+        """
+        # Try offline store first (Parquet — covers all vehicles post-pipeline)
+        offline_available = await self.offline_reader.is_available.remote()
+        if offline_available:
+            try:
+                df = await self.offline_reader.lookup.remote([vehicle_id])
+                if df is not None:
+                    row = df.iloc[0]
+                    return ComputedFeatures(
+                        vehicle_id=vehicle_id,
+                        technology=int(row["technology"]),
+                        actual_price=float(row["actual_price"]),
+                        recommended_price=float(row["recommended_price"]),
+                        num_images=int(row["num_images"]),
+                        street_parked=int(row["street_parked"]),
+                        description=int(row["description"]),
+                        price_diff=float(row["price_diff"]),
+                        price_ratio=float(row["price_ratio"]),
+                        materialized=True,
+                        store="offline",
+                    )
+            except Exception:
+                pass  # fall through to online store
+
+        # Fallback: online store (Redis — for recently-saved vehicles)
         feast_online = await self.feature_lookup.is_available.remote()
         if not feast_online:
             return ComputedFeatures(vehicle_id=vehicle_id, materialized=False)
         try:
             df = await self.feature_lookup.lookup.remote([vehicle_id])
             row = df.iloc[0]
-            # Check if Feast returned nulls (vehicle not materialized)
             if pd.isna(row.get("technology")):
                 return ComputedFeatures(vehicle_id=vehicle_id, materialized=False)
             return ComputedFeatures(
@@ -123,12 +349,18 @@ class VroomForecastApp:
                 price_diff=float(row["price_diff"]),
                 price_ratio=float(row["price_ratio"]),
                 materialized=True,
+                store="online",
             )
         except Exception:
             return ComputedFeatures(vehicle_id=vehicle_id, materialized=False)
 
     @app.post("/predict", response_model=PredictionResponse)
     async def predict_single(self, vehicle: VehicleFeatures) -> PredictionResponse:
+        is_loaded = await self.predictor.is_loaded.remote()
+        if not is_loaded:
+            raise HTTPException(
+                status_code=503, detail="No model loaded. Train and promote a model first."
+            )
         features_df = await self.feature_computer.compute.remote([vehicle])
         predictions = await self.predictor.predict.remote(features_df)
         version = await self.predictor.get_version.remote()
@@ -139,6 +371,11 @@ class VroomForecastApp:
 
     @app.post("/predict/id", response_model=PredictionResponse)
     async def predict_by_id(self, req: VehicleIdRequest) -> PredictionResponse:
+        is_loaded = await self.predictor.is_loaded.remote()
+        if not is_loaded:
+            raise HTTPException(
+                status_code=503, detail="No model loaded. Train and promote a model first."
+            )
         feast_online = await self.feature_lookup.is_available.remote()
         if not feast_online:
             raise HTTPException(status_code=503, detail="Feature store not configured")
@@ -157,6 +394,11 @@ class VroomForecastApp:
 
     @app.post("/predict/batch", response_model=BatchPredictionResponse)
     async def predict_batch(self, vehicles: list[VehicleFeatures]) -> BatchPredictionResponse:
+        is_loaded = await self.predictor.is_loaded.remote()
+        if not is_loaded:
+            raise HTTPException(
+                status_code=503, detail="No model loaded. Train and promote a model first."
+            )
         if len(vehicles) > 1000:
             raise HTTPException(status_code=400, detail="Max 1000 vehicles per batch")
         if len(vehicles) == 0:
@@ -174,77 +416,72 @@ class VroomForecastApp:
             ]
         )
 
-    @app.post("/benchmark", response_model=BenchmarkResponse)
-    async def benchmark(self, req: BenchmarkRequest) -> BenchmarkResponse:
-        """Benchmark: feature computation (on the fly) + inference."""
-        latencies: list[float] = []
-        feature_times: list[float] = []
-        predict_times: list[float] = []
-        for _ in range(req.n_iterations):
-            total_start = time.perf_counter()
-
-            feat_start = time.perf_counter()
-            features_df = await self.feature_computer.compute.remote([req.vehicle])
-            feat_elapsed = (time.perf_counter() - feat_start) * 1000
-            feature_times.append(feat_elapsed)
-
-            pred_start = time.perf_counter()
-            await self.predictor.predict.remote(features_df)
-            pred_elapsed = (time.perf_counter() - pred_start) * 1000
-            predict_times.append(pred_elapsed)
-
-            total_elapsed = (time.perf_counter() - total_start) * 1000
-            latencies.append(total_elapsed)
-
+    async def _run_benchmark(
+        self,
+        n_iterations: int,
+        feature_latencies: list[float],
+        predict_latencies: list[float],
+        source: str,
+    ) -> BenchmarkResponse:
+        """Build a BenchmarkResponse from pre-collected latency lists."""
+        total_latencies = [f + p for f, p in zip(feature_latencies, predict_latencies, strict=True)]
         version = await self.predictor.get_version.remote()
-        arr = np.array(latencies)
+        arr = np.array(total_latencies)
         return BenchmarkResponse(
-            n_iterations=req.n_iterations,
+            n_iterations=n_iterations,
             avg_latency_ms=round(float(np.mean(arr)), 3),
             p50_latency_ms=round(float(np.percentile(arr, 50)), 3),
             p95_latency_ms=round(float(np.percentile(arr, 95)), 3),
             p99_latency_ms=round(float(np.percentile(arr, 99)), 3),
             model_version=version,
+            source=source,
+            avg_features_ms=round(float(np.mean(feature_latencies)), 3),
+            avg_predict_ms=round(float(np.mean(predict_latencies)), 3),
+        )
+
+    @app.post("/benchmark", response_model=BenchmarkResponse)
+    async def benchmark(self, req: BenchmarkRequest) -> BenchmarkResponse:
+        """Benchmark: feature computation (on the fly) + inference."""
+        is_loaded = await self.predictor.is_loaded.remote()
+        if not is_loaded:
+            raise HTTPException(
+                status_code=503, detail="No model loaded. Train and promote a model first."
+            )
+        # Run feature computation once to get the DataFrame for predict benchmark
+        features_df = await self.feature_computer.compute.remote([req.vehicle])
+        # Run both benchmark loops inside the actors in parallel (1 .remote() each)
+        feature_latencies, predict_latencies = await asyncio.gather(
+            self.feature_computer.benchmark_compute.remote([req.vehicle], req.n_iterations),
+            self.predictor.benchmark_predict.remote(features_df, req.n_iterations),
+        )
+        return await self._run_benchmark(
+            n_iterations=req.n_iterations,
+            feature_latencies=feature_latencies,
+            predict_latencies=predict_latencies,
             source="raw",
-            avg_features_ms=round(float(np.mean(feature_times)), 3),
-            avg_predict_ms=round(float(np.mean(predict_times)), 3),
         )
 
     @app.post("/benchmark/id", response_model=BenchmarkResponse)
     async def benchmark_by_id(self, req: BenchmarkByIdRequest) -> BenchmarkResponse:
         """Benchmark: feature lookup (online store) + inference."""
+        is_loaded = await self.predictor.is_loaded.remote()
+        if not is_loaded:
+            raise HTTPException(
+                status_code=503, detail="No model loaded. Train and promote a model first."
+            )
         feast_online = await self.feature_lookup.is_available.remote()
         if not feast_online:
             raise HTTPException(status_code=503, detail="Feature store not configured")
-        latencies: list[float] = []
-        feature_times: list[float] = []
-        predict_times: list[float] = []
-        for _ in range(req.n_iterations):
-            total_start = time.perf_counter()
-
-            feat_start = time.perf_counter()
-            features_df = await self.feature_lookup.lookup.remote([req.vehicle_id])
-            feat_elapsed = (time.perf_counter() - feat_start) * 1000
-            feature_times.append(feat_elapsed)
-
-            pred_start = time.perf_counter()
-            await self.predictor.predict.remote(features_df)
-            pred_elapsed = (time.perf_counter() - pred_start) * 1000
-            predict_times.append(pred_elapsed)
-
-            total_elapsed = (time.perf_counter() - total_start) * 1000
-            latencies.append(total_elapsed)
-
-        version = await self.predictor.get_version.remote()
-        arr = np.array(latencies)
-        return BenchmarkResponse(
+        # Run feature lookup once to get the DataFrame for predict benchmark
+        features_df = await self.feature_lookup.lookup.remote([req.vehicle_id])
+        # Run both benchmark loops inside the actors in parallel (1 .remote() each)
+        feature_latencies, predict_latencies = await asyncio.gather(
+            self.feature_lookup.benchmark_lookup.remote([req.vehicle_id], req.n_iterations),
+            self.predictor.benchmark_predict.remote(features_df, req.n_iterations),
+        )
+        return await self._run_benchmark(
             n_iterations=req.n_iterations,
-            avg_latency_ms=round(float(np.mean(arr)), 3),
-            p50_latency_ms=round(float(np.percentile(arr, 50)), 3),
-            p95_latency_ms=round(float(np.percentile(arr, 95)), 3),
-            p99_latency_ms=round(float(np.percentile(arr, 99)), 3),
-            model_version=version,
+            feature_latencies=feature_latencies,
+            predict_latencies=predict_latencies,
             source="online_store",
-            avg_features_ms=round(float(np.mean(feature_times)), 3),
-            avg_predict_ms=round(float(np.mean(predict_times)), 3),
         )

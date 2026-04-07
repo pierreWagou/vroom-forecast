@@ -11,7 +11,7 @@ graph LR
         S[seed] --> M[materialize]
     end
 
-    subgraph "Training (weekly Sun 02:00)"
+    subgraph "Training (on fresh features)"
         T[train] --> TP[trigger_promotion]
     end
 
@@ -19,7 +19,7 @@ graph LR
         P[promote]
     end
 
-    M -.->|features ready| T
+    M -->|Dataset: features ready| T
     TP -->|TriggerDagRunOperator| P
     P -.->|Redis pub/sub| SRV[Serving reloads model]
 ```
@@ -29,7 +29,7 @@ graph LR
 | DAG | Schedule | Tasks | Description |
 |-----|----------|-------|-------------|
 | `vroom_forecast_materialize` | `0 1 * * *` (daily) | seed, materialize | Seed DB from CSVs, compute features, write Parquet + Redis |
-| `vroom_forecast_training` | `0 2 * * 0` (Sundays) | train, trigger_promotion | Train from offline store, register candidate, trigger promotion |
+| `vroom_forecast_training` | Dataset-driven (after materialize) | train, trigger_promotion | Train from offline store, register candidate, trigger promotion |
 | `vroom_forecast_promotion` | None (event-driven) | promote | Compare candidate vs champion, promote if better, notify via Redis |
 
 ## How it works

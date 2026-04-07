@@ -1,0 +1,115 @@
+site_name: Vroom Forecast
+site_description: ML pipeline predicting vehicle reservations — Staff MLOps take-home for Turo
+site_url: http://localhost:8100/
+repo_url: https://github.com/wagou/vroom-forecast
+repo_name: wagou/vroom-forecast
+
+theme:
+  name: material
+  language: en
+  custom_dir: docs/overrides
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.instant
+    - navigation.instant.progress
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  palette:
+    # Light mode — Turo purple
+    - scheme: default
+      primary: deep purple
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+# Custom CSS for Turo brand polish
+extra_css:
+  - assets/extra.css
+
+# Navigation — symlinked READMEs in docs/
+nav:
+  - Home: index.md
+  - Pipeline:
+    - Feature Store: features.md
+    - Training: training.md
+    - Promotion: promotion.md
+    - Orchestration: airflow.md
+  - Serving:
+    - Overview: serving.md
+    - API Reference: api.md
+  - Frontend: ui.md
+  - Exploration: exploration.md
+
+# Markdown extensions for rich content
+markdown_extensions:
+  # Tables, footnotes, attribute lists
+  - tables
+  - footnotes
+  - attr_list
+  - md_in_html
+  - def_list
+  # Admonitions (note, warning, tip boxes)
+  - admonition
+  - pymdownx.details
+  # Code highlighting + copy
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  # Fenced code blocks + Mermaid diagrams
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  # Content tabs, task lists, emoji
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  # Table of contents
+  - toc:
+      permalink: true
+      toc_depth: 3
+
+# Plugins
+plugins:
+  - search
+
+# Footer
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/wagou/vroom-forecast
+      name: GitHub Repository
+  generator: false
+
+# Copyright
+copyright: "Vroom Forecast &mdash; Staff MLOps Take-Home for Turo"

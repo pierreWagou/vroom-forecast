@@ -13,13 +13,16 @@ from __future__ import annotations
 import pendulum
 from airflow.operators.bash import BashOperator
 
-from airflow import DAG
+from airflow import DAG, Dataset
 
 DATA_DIR = "/opt/airflow/data"
 DB_PATH = "/feast-data/vehicles.db"
 FEAST_REPO = "/opt/airflow/features/feature_repo"
 PARQUET_PATH = "/feast-data/vehicle_features.parquet"
 PROJECT_DIR = "/opt/airflow"
+
+# Dataset marker for cross-DAG dependency — the training DAG waits for this
+FEATURES_DATASET = Dataset("file:///feast-data/vehicle_features.parquet")
 
 with DAG(
     dag_id="vroom_forecast_materialize",
@@ -38,6 +41,7 @@ with DAG(
         task_id="seed",
         cwd=PROJECT_DIR,
         bash_command=(f"cd features && uv run python seed.py --data-dir {DATA_DIR} --db {DB_PATH}"),
+        execution_timeout=pendulum.duration(minutes=10),
     )
 
     materialize = BashOperator(
@@ -49,6 +53,8 @@ with DAG(
             f"--feast-repo {FEAST_REPO} "
             f"--parquet-path {PARQUET_PATH}"
         ),
+        outlets=[FEATURES_DATASET],
+        execution_timeout=pendulum.duration(minutes=15),
     )
 
     seed >> materialize

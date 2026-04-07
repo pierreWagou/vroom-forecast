@@ -1,0 +1,867 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+        "title": "Vroom Forecast API",
+        "description": "Predicts vehicle reservations \u2014 powered by Ray Serve.",
+        "version": "0.2.0"
+    },
+    "paths": {
+        "/health": {
+            "get": {
+                "summary": "Health",
+                "operationId": "health_health_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HealthResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/reload": {
+            "post": {
+                "summary": "Reload Model",
+                "operationId": "reload_model_reload_post",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ReloadResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/events": {
+            "get": {
+                "summary": "Events",
+                "description": "SSE endpoint \u2014 streams model-promoted events from Redis pub/sub.\n\nThe UI subscribes via EventSource to get notified when a new champion\nis promoted, without polling. Falls back gracefully if Redis is not\nconfigured (stream stays open but silent).",
+                "operationId": "events_events_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/vehicles": {
+            "get": {
+                "summary": "List Vehicles Endpoint",
+                "operationId": "list_vehicles_endpoint_vehicles_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/VehicleRecord"
+                                    },
+                                    "type": "array",
+                                    "title": "Response List Vehicles Endpoint Vehicles Get"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Save Vehicle Endpoint",
+                "operationId": "save_vehicle_endpoint_vehicles_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/VehicleFeatures"
+                            },
+                            "example": {}
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SaveVehicleResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/vehicles/{vehicle_id}/features": {
+            "get": {
+                "summary": "Get Vehicle Features",
+                "description": "Get the computed features from the online store for a saved vehicle.",
+                "operationId": "get_vehicle_features_vehicles__vehicle_id__features_get",
+                "parameters": [
+                    {
+                        "name": "vehicle_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "integer",
+                            "title": "Vehicle Id"
+                        },
+                        "example": {}
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ComputedFeatures"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/predict": {
+            "post": {
+                "summary": "Predict Single",
+                "operationId": "predict_single_predict_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/VehicleFeatures"
+                            },
+                            "example": {}
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PredictionResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/predict/id": {
+            "post": {
+                "summary": "Predict By Id",
+                "operationId": "predict_by_id_predict_id_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/VehicleIdRequest"
+                            },
+                            "example": {}
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PredictionResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/predict/batch": {
+            "post": {
+                "summary": "Predict Batch",
+                "operationId": "predict_batch_predict_batch_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "items": {
+                                    "$ref": "#/components/schemas/VehicleFeatures"
+                                },
+                                "type": "array",
+                                "title": "Vehicles"
+                            },
+                            "example": {}
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/BatchPredictionResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/benchmark": {
+            "post": {
+                "summary": "Benchmark",
+                "description": "Benchmark: feature computation (on the fly) + inference.",
+                "operationId": "benchmark_benchmark_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/BenchmarkRequest"
+                            },
+                            "example": {}
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/BenchmarkResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/benchmark/id": {
+            "post": {
+                "summary": "Benchmark By Id",
+                "description": "Benchmark: feature lookup (online store) + inference.",
+                "operationId": "benchmark_by_id_benchmark_id_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/BenchmarkByIdRequest"
+                            },
+                            "example": {}
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/BenchmarkResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "BatchPredictionResponse": {
+                "properties": {
+                    "predictions": {
+                        "items": {
+                            "$ref": "#/components/schemas/PredictionResponse"
+                        },
+                        "type": "array",
+                        "title": "Predictions"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "predictions"
+                ],
+                "title": "BatchPredictionResponse"
+            },
+            "BenchmarkByIdRequest": {
+                "properties": {
+                    "n_iterations": {
+                        "type": "integer",
+                        "maximum": 100000.0,
+                        "minimum": 1.0,
+                        "title": "N Iterations",
+                        "default": 1000
+                    },
+                    "vehicle_id": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0.0,
+                        "title": "Vehicle Id"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "vehicle_id"
+                ],
+                "title": "BenchmarkByIdRequest"
+            },
+            "BenchmarkRequest": {
+                "properties": {
+                    "n_iterations": {
+                        "type": "integer",
+                        "maximum": 100000.0,
+                        "minimum": 1.0,
+                        "title": "N Iterations",
+                        "default": 1000
+                    },
+                    "vehicle": {
+                        "$ref": "#/components/schemas/VehicleFeatures"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "vehicle"
+                ],
+                "title": "BenchmarkRequest"
+            },
+            "BenchmarkResponse": {
+                "properties": {
+                    "n_iterations": {
+                        "type": "integer",
+                        "title": "N Iterations"
+                    },
+                    "avg_latency_ms": {
+                        "type": "number",
+                        "title": "Avg Latency Ms"
+                    },
+                    "p50_latency_ms": {
+                        "type": "number",
+                        "title": "P50 Latency Ms"
+                    },
+                    "p95_latency_ms": {
+                        "type": "number",
+                        "title": "P95 Latency Ms"
+                    },
+                    "p99_latency_ms": {
+                        "type": "number",
+                        "title": "P99 Latency Ms"
+                    },
+                    "model_version": {
+                        "type": "string",
+                        "title": "Model Version"
+                    },
+                    "source": {
+                        "type": "string",
+                        "title": "Source",
+                        "default": "raw"
+                    },
+                    "avg_features_ms": {
+                        "type": "number",
+                        "title": "Avg Features Ms",
+                        "default": 0.0
+                    },
+                    "avg_predict_ms": {
+                        "type": "number",
+                        "title": "Avg Predict Ms",
+                        "default": 0.0
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "n_iterations",
+                    "avg_latency_ms",
+                    "p50_latency_ms",
+                    "p95_latency_ms",
+                    "p99_latency_ms",
+                    "model_version"
+                ],
+                "title": "BenchmarkResponse"
+            },
+            "ComputedFeatures": {
+                "properties": {
+                    "vehicle_id": {
+                        "type": "integer",
+                        "title": "Vehicle Id"
+                    },
+                    "technology": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Technology"
+                    },
+                    "actual_price": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Actual Price"
+                    },
+                    "recommended_price": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Recommended Price"
+                    },
+                    "num_images": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Num Images"
+                    },
+                    "street_parked": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Street Parked"
+                    },
+                    "description": {
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Description"
+                    },
+                    "price_diff": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Price Diff"
+                    },
+                    "price_ratio": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Price Ratio"
+                    },
+                    "materialized": {
+                        "type": "boolean",
+                        "title": "Materialized",
+                        "default": false
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "vehicle_id"
+                ],
+                "title": "ComputedFeatures",
+                "description": "Features as computed by the feature pipeline and stored in the online store."
+            },
+            "HTTPValidationError": {
+                "properties": {
+                    "detail": {
+                        "items": {
+                            "$ref": "#/components/schemas/ValidationError"
+                        },
+                        "type": "array",
+                        "title": "Detail"
+                    }
+                },
+                "type": "object",
+                "title": "HTTPValidationError"
+            },
+            "HealthResponse": {
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "title": "Status"
+                    },
+                    "model_name": {
+                        "type": "string",
+                        "title": "Model Name"
+                    },
+                    "model_version": {
+                        "type": "string",
+                        "title": "Model Version"
+                    },
+                    "mlflow_uri": {
+                        "type": "string",
+                        "title": "Mlflow Uri"
+                    },
+                    "feast_online": {
+                        "type": "boolean",
+                        "title": "Feast Online"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "status",
+                    "model_name",
+                    "model_version",
+                    "mlflow_uri",
+                    "feast_online"
+                ],
+                "title": "HealthResponse"
+            },
+            "PredictionResponse": {
+                "properties": {
+                    "predicted_reservations": {
+                        "type": "number",
+                        "title": "Predicted Reservations"
+                    },
+                    "model_version": {
+                        "type": "string",
+                        "title": "Model Version"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "predicted_reservations",
+                    "model_version"
+                ],
+                "title": "PredictionResponse"
+            },
+            "ReloadResponse": {
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "title": "Status"
+                    },
+                    "previous_version": {
+                        "type": "string",
+                        "title": "Previous Version"
+                    },
+                    "current_version": {
+                        "type": "string",
+                        "title": "Current Version"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "status",
+                    "previous_version",
+                    "current_version"
+                ],
+                "title": "ReloadResponse"
+            },
+            "SaveVehicleResponse": {
+                "properties": {
+                    "vehicle_id": {
+                        "type": "integer",
+                        "title": "Vehicle Id"
+                    },
+                    "status": {
+                        "type": "string",
+                        "title": "Status"
+                    },
+                    "event_published": {
+                        "type": "boolean",
+                        "title": "Event Published",
+                        "default": true
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "vehicle_id",
+                    "status"
+                ],
+                "title": "SaveVehicleResponse"
+            },
+            "ValidationError": {
+                "properties": {
+                    "loc": {
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "integer"
+                                }
+                            ]
+                        },
+                        "type": "array",
+                        "title": "Location"
+                    },
+                    "msg": {
+                        "type": "string",
+                        "title": "Message"
+                    },
+                    "type": {
+                        "type": "string",
+                        "title": "Error Type"
+                    },
+                    "input": {
+                        "title": "Input"
+                    },
+                    "ctx": {
+                        "type": "object",
+                        "title": "Context"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "loc",
+                    "msg",
+                    "type"
+                ],
+                "title": "ValidationError"
+            },
+            "VehicleFeatures": {
+                "properties": {
+                    "technology": {
+                        "type": "integer",
+                        "maximum": 1.0,
+                        "minimum": 0.0,
+                        "title": "Technology",
+                        "description": "0=none, 1=installed"
+                    },
+                    "actual_price": {
+                        "type": "number",
+                        "exclusiveMinimum": 0.0,
+                        "title": "Actual Price",
+                        "description": "Daily price set by owner"
+                    },
+                    "recommended_price": {
+                        "type": "number",
+                        "exclusiveMinimum": 0.0,
+                        "title": "Recommended Price",
+                        "description": "Market price"
+                    },
+                    "num_images": {
+                        "type": "integer",
+                        "minimum": 0.0,
+                        "title": "Num Images",
+                        "description": "Number of photos"
+                    },
+                    "street_parked": {
+                        "type": "integer",
+                        "maximum": 1.0,
+                        "minimum": 0.0,
+                        "title": "Street Parked",
+                        "description": "0=no, 1=yes"
+                    },
+                    "description": {
+                        "type": "integer",
+                        "minimum": 0.0,
+                        "title": "Description",
+                        "description": "Character count of description"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "technology",
+                    "actual_price",
+                    "recommended_price",
+                    "num_images",
+                    "street_parked",
+                    "description"
+                ],
+                "title": "VehicleFeatures",
+                "description": "Raw vehicle attributes (before feature engineering).",
+                "examples": [
+                    {
+                        "actual_price": 45.0,
+                        "description": 250,
+                        "num_images": 8,
+                        "recommended_price": 50.0,
+                        "street_parked": 0,
+                        "technology": 1
+                    }
+                ]
+            },
+            "VehicleIdRequest": {
+                "properties": {
+                    "vehicle_id": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0.0,
+                        "title": "Vehicle Id",
+                        "description": "Vehicle ID to look up in the feature store"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "vehicle_id"
+                ],
+                "title": "VehicleIdRequest",
+                "description": "Predict by vehicle ID \u2014 features are looked up from the online store (Redis)."
+            },
+            "VehicleRecord": {
+                "properties": {
+                    "vehicle_id": {
+                        "type": "integer",
+                        "title": "Vehicle Id"
+                    },
+                    "technology": {
+                        "type": "integer",
+                        "title": "Technology"
+                    },
+                    "actual_price": {
+                        "type": "number",
+                        "title": "Actual Price"
+                    },
+                    "recommended_price": {
+                        "type": "number",
+                        "title": "Recommended Price"
+                    },
+                    "num_images": {
+                        "type": "integer",
+                        "title": "Num Images"
+                    },
+                    "street_parked": {
+                        "type": "integer",
+                        "title": "Street Parked"
+                    },
+                    "description": {
+                        "type": "integer",
+                        "title": "Description"
+                    },
+                    "source": {
+                        "type": "string",
+                        "title": "Source",
+                        "default": "csv"
+                    },
+                    "num_reservations": {
+                        "type": "integer",
+                        "title": "Num Reservations",
+                        "default": 0
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "vehicle_id",
+                    "technology",
+                    "actual_price",
+                    "recommended_price",
+                    "num_images",
+                    "street_parked",
+                    "description"
+                ],
+                "title": "VehicleRecord",
+                "description": "A stored vehicle with its ID, attributes, source, and reservation count."
+            }
+        }
+    }
+}

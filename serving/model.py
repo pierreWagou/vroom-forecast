@@ -18,6 +18,10 @@ from serving.schemas import VehicleFeatures
 
 logger = logging.getLogger(__name__)
 
+# Redis pub/sub channels — single source of truth for the serving layer
+VEHICLE_SAVED_CHANNEL = "vroom-forecast:vehicle-saved"
+MODEL_PROMOTED_CHANNEL = "vroom-forecast:model-promoted"
+
 # Feature references for Feast online store lookup
 _ONLINE_FEATURE_REFS = [
     "vehicle_features:technology",
@@ -51,10 +55,17 @@ class Predictor:
 
         try:
             champion_mv = client.get_model_version_by_alias(settings.model_name, "champion")
-        except Exception:
+        except mlflow.exceptions.MlflowException:
             logger.warning(
                 "No champion model found for '%s'. Predictor started without a model.",
                 settings.model_name,
+            )
+            return
+        except Exception:
+            logger.warning(
+                "Could not reach MLflow at '%s'. Predictor started without a model.",
+                settings.mlflow_uri,
+                exc_info=True,
             )
             return
 
@@ -70,6 +81,20 @@ class Predictor:
             raise RuntimeError("No model loaded.")
         raw = self.model.predict(features_df[FEATURE_COLS])
         return [float(p) for p in raw]
+
+    def benchmark_predict(self, features_df: pd.DataFrame, n: int) -> list[float]:
+        """Run predict N times and return per-iteration latencies in ms."""
+        import time
+
+        if self.model is None:
+            raise RuntimeError("No model loaded.")
+        cols = features_df[FEATURE_COLS]
+        latencies: list[float] = []
+        for _ in range(n):
+            start = time.perf_counter()
+            self.model.predict(cols)
+            latencies.append((time.perf_counter() - start) * 1000)
+        return latencies
 
     def reload(self) -> tuple[str, str]:
         """Reload the champion model. Returns (previous_version, current_version)."""
@@ -96,6 +121,17 @@ class FeatureComputer:
         """Compute features from raw attributes."""
         df = pd.DataFrame([v.model_dump() for v in vehicles])
         return engineer_features(df)
+
+    def benchmark_compute(self, vehicles: list[VehicleFeatures], n: int) -> list[float]:
+        """Run compute N times and return per-iteration latencies in ms."""
+        import time
+
+        latencies: list[float] = []
+        for _ in range(n):
+            start = time.perf_counter()
+            self.compute(vehicles)
+            latencies.append((time.perf_counter() - start) * 1000)
+        return latencies
 
 
 @serve.deployment
@@ -140,12 +176,75 @@ class FeatureLookup:
         )
         return response.to_df()
 
+    def benchmark_lookup(self, vehicle_ids: list[int], n: int) -> list[float]:
+        """Run lookup N times and return per-iteration latencies in ms."""
+        import time
+
+        if self._store is None:
+            raise RuntimeError("Feast online store is not initialized.")
+        entity_rows = [{"vehicle_id": vid} for vid in vehicle_ids]
+        latencies: list[float] = []
+        for _ in range(n):
+            start = time.perf_counter()
+            self._store.get_online_features(
+                features=_ONLINE_FEATURE_REFS,
+                entity_rows=entity_rows,
+            )
+            latencies.append((time.perf_counter() - start) * 1000)
+        return latencies
+
     def is_available(self) -> bool:
         return self._store is not None
 
 
-VEHICLE_SAVED_CHANNEL = "vroom-forecast:vehicle-saved"
-MODEL_PROMOTED_CHANNEL = "vroom-forecast:model-promoted"
+@serve.deployment
+class OfflineFeatureReader:
+    """Reads pre-computed features from the Feast offline store (Parquet).
+
+    Used for fleet vehicles (source=csv) whose features were computed by the
+    batch pipeline. The Parquet file is the single source of truth for the
+    offline store — the same data used for model training.
+    """
+
+    def __init__(self) -> None:
+        self._df: pd.DataFrame | None = None
+        self._load()
+
+    def _load(self) -> None:
+        from pathlib import Path
+
+        path = settings.offline_store_path
+        if path is None:
+            logger.info("No SERVING_OFFLINE_STORE_PATH configured — offline reader disabled.")
+            return
+
+        parquet_path = Path(path)
+        if not parquet_path.exists():
+            logger.warning(
+                "Offline store not found at %s — disabled. Run the materialize pipeline first.",
+                path,
+            )
+            return
+
+        self._df = pd.read_parquet(parquet_path)
+        self._df = self._df.set_index("vehicle_id")
+        logger.info("OfflineFeatureReader: Loaded %d vehicles from %s.", len(self._df), path)
+
+    def lookup(self, vehicle_ids: list[int]) -> pd.DataFrame | None:
+        """Look up features for the given vehicle IDs from the Parquet file.
+
+        Returns None if the offline store is not available, or a DataFrame
+        with only the vehicles found.
+        """
+        if self._df is None:
+            return None
+        mask = self._df.index.isin(vehicle_ids)
+        if not mask.any():
+            return None
+        return self._df.loc[mask].reset_index()
+
+    def is_available(self) -> bool:
+        return self._df is not None
 
 
 @ray.remote
@@ -163,7 +262,7 @@ class ModelReloadListener:
     def run(self) -> None:
         """Subscribe to Redis and reload the model on promotion events."""
         if settings.redis_url is None:
-            print("[ModelReloadListener] No Redis URL — exiting.", flush=True)
+            logger.info("ModelReloadListener: No Redis URL — exiting.")
             return
 
         import redis
@@ -171,17 +270,17 @@ class ModelReloadListener:
         r = redis.from_url(settings.redis_url)
         pubsub = r.pubsub()
         pubsub.subscribe(MODEL_PROMOTED_CHANNEL)
-        print(f"[ModelReloadListener] Subscribed to '{MODEL_PROMOTED_CHANNEL}'.", flush=True)
+        logger.info("ModelReloadListener: Subscribed to '%s'.", MODEL_PROMOTED_CHANNEL)
 
         for message in pubsub.listen():
             if message["type"] != "message":
                 continue
             try:
-                print(f"[ModelReloadListener] Got promotion event: {message['data']}", flush=True)
+                logger.info("ModelReloadListener: Got promotion event: %s", message["data"])
                 ray.get(self._predictor.reload.remote())
-                print("[ModelReloadListener] Model reloaded.", flush=True)
+                logger.info("ModelReloadListener: Model reloaded.")
             except Exception as e:
-                print(f"[ModelReloadListener] Reload failed: {e}", flush=True)
+                logger.error("ModelReloadListener: Reload failed: %s", e)
 
 
 @ray.remote
@@ -232,44 +331,37 @@ class FeatureMaterializer:
     def _compute_and_write(self, vehicle_id: int, raw: dict) -> None:
         """Compute derived features and write to the Feast online store."""
         if self._store is None:
-            print(
-                f"[FeatureMaterializer] store not initialized, skipping vehicle {vehicle_id}",
-                flush=True,
+            logger.warning(
+                "FeatureMaterializer: store not initialized, skipping vehicle %d", vehicle_id
             )
             return
 
-        rec = raw["recommended_price"]
-        features = {
-            **raw,
-            "price_diff": raw["actual_price"] - rec,
-            "price_ratio": raw["actual_price"] / rec if rec != 0 else float("nan"),
-        }
+        # Reuse the shared engineer_features function to avoid formula duplication
+        df = pd.DataFrame([{**raw, "vehicle_id": vehicle_id}])
+        df = engineer_features(df)
 
         row = {
             "vehicle_id": vehicle_id,
-            "technology": features["technology"],
-            "actual_price": features["actual_price"],
-            "recommended_price": features["recommended_price"],
-            "num_images": features["num_images"],
-            "street_parked": features["street_parked"],
-            "description": features["description"],
-            "price_diff": features["price_diff"],
-            "price_ratio": features["price_ratio"],
+            "technology": df.iloc[0]["technology"],
+            "actual_price": df.iloc[0]["actual_price"],
+            "recommended_price": df.iloc[0]["recommended_price"],
+            "num_images": df.iloc[0]["num_images"],
+            "street_parked": df.iloc[0]["street_parked"],
+            "description": df.iloc[0]["description"],
+            "price_diff": df.iloc[0]["price_diff"],
+            "price_ratio": df.iloc[0]["price_ratio"],
             "num_reservations": 0,
             "event_timestamp": pd.Timestamp(datetime.now(tz=UTC)),
         }
 
-        df = pd.DataFrame([row])
-        self._store.write_to_online_store("vehicle_features", df)
-        print(
-            f"[FeatureMaterializer] Materialized vehicle #{vehicle_id}",
-            flush=True,
-        )
+        write_df = pd.DataFrame([row])
+        self._store.write_to_online_store("vehicle_features", write_df)
+        logger.info("FeatureMaterializer: Materialized vehicle #%d", vehicle_id)
 
     def run(self) -> None:
         """Subscribe to Redis and process vehicle-saved events forever."""
         if settings.redis_url is None:
-            print("[FeatureMaterializer] No Redis URL — exiting.", flush=True)
+            logger.info("FeatureMaterializer: No Redis URL — exiting.")
             return
 
         import redis
@@ -277,15 +369,15 @@ class FeatureMaterializer:
         r = redis.from_url(settings.redis_url)
         pubsub = r.pubsub()
         pubsub.subscribe(VEHICLE_SAVED_CHANNEL)
-        print(f"[FeatureMaterializer] Subscribed to '{VEHICLE_SAVED_CHANNEL}'.", flush=True)
+        logger.info("FeatureMaterializer: Subscribed to '%s'.", VEHICLE_SAVED_CHANNEL)
 
         for message in pubsub.listen():
             if message["type"] != "message":
                 continue
             try:
-                print(f"[FeatureMaterializer] Got event: {message['data']}", flush=True)
+                logger.info("FeatureMaterializer: Got event: %s", message["data"])
                 raw = json.loads(message["data"])
                 vehicle_id = raw.pop("vehicle_id")
                 self._compute_and_write(vehicle_id, raw)
             except Exception as e:
-                print(f"[FeatureMaterializer] Error: {e}", flush=True)
+                logger.error("FeatureMaterializer: Error: %s", e)

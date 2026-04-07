@@ -1,0 +1,21 @@
+# Virtual environments — host venvs break inside the container
+**/.venv
+
+# Python caches
+**/__pycache__
+**/*.pyc
+
+# Exploration / notebooks not needed in Airflow image
+exploration/
+
+# UI not needed in Airflow image
+ui/
+
+# Git / IDE
+.git
+**/.idea
+**/.vscode
+
+# Data files (mounted at runtime if needed)
+data/
+feast-data/

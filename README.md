@@ -16,7 +16,7 @@ graph TB
 
     subgraph Feature Store
         DB -->|pipeline.py| PQ[Parquet<br/>offline store]
-        DB -->|pipeline.py| Redis[(Redis<br/>online store)]
+        DB -->|pipeline.py<br/>new arrivals only| Redis[(Redis<br/>online store)]
         DB -->|vehicle saved| RM{{FeatureMaterializer<br/>Ray actor}}
         RM -->|real-time| Redis
     end
@@ -24,7 +24,7 @@ graph TB
     subgraph Orchestration
         AF[Airflow]
         AF -->|daily| MAT[Materialize DAG<br/>seed + compute features]
-        AF -->|weekly| TR[Training DAG<br/>train + register model]
+        AF -->|on fresh features| TR[Training DAG<br/>train + register model]
         AF -->|event| PR[Promotion DAG<br/>champion/challenger]
         TR -->|trigger| PR
     end
@@ -68,12 +68,15 @@ cd ui && npm install && npm run dev
 # 3. Seed the database and materialize features
 docker compose exec airflow airflow dags trigger vroom_forecast_materialize
 
-# 4. Train a model
+# 4. Train a model (auto-triggers after materialize via Airflow Dataset)
+#    Or trigger manually:
 docker compose exec airflow airflow dags trigger vroom_forecast_training
 
 # 5. Open the UI
 open http://localhost:3000
 ```
+
+> **Airflow UI:** http://localhost:8080 — credentials: `admin` / `admin`
 
 ## Services
 
@@ -87,6 +90,7 @@ open http://localhost:3000
 | API Docs | [localhost:8000/docs](http://localhost:8000/docs) | Interactive Swagger UI |
 | Ray Dashboard | [localhost:8265](http://localhost:8265) | Ray cluster monitoring |
 | UI | [localhost:3000](http://localhost:3000) | Next.js frontend |
+| Docs | [localhost:8100](http://localhost:8100) | MkDocs documentation |
 | Jupyter | localhost:8888 | EDA notebooks |
 
 ## Project Structure
@@ -124,9 +128,9 @@ sequenceDiagram
     FP->>DB: Read all vehicles + reservations
     FP->>FP: Compute price_diff, price_ratio
     FP->>PQ: Write offline store
-    FP->>RD: Materialize online store
+    FP->>RD: Materialize new arrivals to online store
 
-    Note over TR,MLF: Weekly (Airflow)
+    Note over TR,MLF: On fresh features (Airflow Dataset)
     TR->>PQ: Read training data
     TR->>TR: Train RandomForest (5-fold CV)
     TR->>MLF: Log metrics + register model

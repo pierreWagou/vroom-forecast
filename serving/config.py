@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     port: int = 8000
     feast_repo: str | None = None
     redis_url: str | None = None  # Redis URL for model reload pub/sub
+    db_path: str = "/feast-data/vehicles.db"  # SQLite path for vehicle persistence
+    offline_store_path: str | None = None  # Parquet path for offline feature store
 
     model_config = {"env_prefix": "SERVING_"}
 

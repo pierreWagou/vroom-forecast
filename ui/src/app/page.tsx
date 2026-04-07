@@ -1,15 +1,23 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useTheme } from "next-themes";
 import {
+  BookOpen,
   Car,
   DollarSign,
-  Image,
+  HardDrive,
+  ImageIcon,
   Loader2,
   Monitor,
+  Moon,
+  Plus,
   RefreshCw,
   Save,
+  Server,
   Settings,
+  Sun,
+  Trash2,
 } from "lucide-react";
 import {
   Card,
@@ -40,14 +48,19 @@ import {
   benchmarkById,
   reloadModel,
   saveVehicle,
+  deleteVehicle,
   listVehicles,
   fetchVehicleFeatures,
+  fetchAllVehicleFeatures,
+  fetchStoreInfo,
+  API_URL,
   type VehicleFeatures,
   type PredictionResponse,
   type HealthResponse,
   type BenchmarkResponse,
   type VehicleRecord,
   type ComputedFeatures,
+  type StoreInfo,
 } from "@/lib/api";
 
 const DEFAULT_VEHICLE: VehicleFeatures = {
@@ -68,6 +81,7 @@ function StatusDot({ online }: { online: boolean }) {
 }
 
 export default function Home() {
+  const { setTheme, resolvedTheme } = useTheme();
   const [vehicle, setVehicle] = useState<VehicleFeatures>(DEFAULT_VEHICLE);
   const [prediction, setPrediction] = useState<PredictionResponse | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -78,36 +92,75 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [benchLoading, setBenchLoading] = useState(false);
   const [benchStoreLoading, setBenchStoreLoading] = useState(false);
+  const [benchVehicleId, setBenchVehicleId] = useState<string>("");
   const [benchProgress, setBenchProgress] = useState(0);
   const [benchStoreProgress, setBenchStoreProgress] = useState(0);
+  const [benchIterations, setBenchIterations] = useState("1000");
   const [error, setError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedVehicles, setSavedVehicles] = useState<VehicleRecord[]>([]);
+  const [fleetSearch, setFleetSearch] = useState("");
   const [vehiclePredictions, setVehiclePredictions] = useState<
     Record<number, PredictionResponse>
   >({});
   const [vehicleFeatures, setVehicleFeatures] = useState<
     Record<number, ComputedFeatures>
   >({});
+  const [storeInfo, setStoreInfo] = useState<StoreInfo | null>(null);
 
   useEffect(() => {
     setMounted(true);
     fetchHealth().then(setHealth).catch(() => setHealth(null));
+    fetchStoreInfo().then(setStoreInfo).catch(() => {});
   }, []);
+
+  // Subscribe to SSE for model-promoted events — auto-refreshes health when
+  // a new champion is promoted, without polling. Also handles the initial
+  // "offline → online" transition by retrying the EventSource connection.
+  useEffect(() => {
+    if (!mounted) return;
+
+    const apiUrl = API_URL;
+    let es: EventSource | null = null;
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      es = new EventSource(`${apiUrl}/events`);
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "model-promoted") {
+            // Refresh health to get the new model version
+            fetchHealth().then(setHealth).catch(() => {});
+          }
+        } catch {
+          // Ignore parse errors (keepalive comments etc.)
+        }
+      };
+      es.onerror = () => {
+        // Connection lost — close and retry in 5s
+        es?.close();
+        retryTimeout = setTimeout(connect, 5000);
+      };
+    };
+
+    connect();
+    return () => {
+      es?.close();
+      if (retryTimeout) clearTimeout(retryTimeout);
+    };
+  }, [mounted]);
 
   const handleReload = async () => {
     setReloading(true);
     setError(null);
     try {
-      const result = await reloadModel();
+      await reloadModel();
       // Refresh health to get updated version
       const h = await fetchHealth();
       setHealth(h);
-      if (result.status === "reloaded") {
-        setError(null);
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Reload failed");
     } finally {
@@ -122,7 +175,7 @@ export default function Home() {
       const result = await predict(vehicle);
       setPrediction(result);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Prediction failed");
+      setError(e instanceof Error ? e.message : "Simulation failed");
     } finally {
       setLoading(false);
     }
@@ -132,12 +185,15 @@ export default function Home() {
     setBenchLoading(true);
     setBenchProgress(0);
     setError(null);
-    const timer = setInterval(
-      () => setBenchProgress((p) => Math.min(p + 8, 90)),
-      200
-    );
+    const iterations = Math.max(10, Number(benchIterations) || 1000);
+    const estimatedMs = iterations * 0.015 * 1000; // ~15ms per iteration
+    const start = Date.now();
+    const timer = setInterval(() => {
+      const elapsed = Date.now() - start;
+      setBenchProgress(Math.min(Math.round((elapsed / estimatedMs) * 95), 95));
+    }, 100);
     try {
-      const result = await benchmark(vehicle, 1000);
+      const result = await benchmark(vehicle, iterations);
       setBenchmarkResult(result);
       setBenchProgress(100);
     } catch (e) {
@@ -149,23 +205,23 @@ export default function Home() {
   };
 
   const handleBenchmarkStore = async () => {
-    // Use the first materialized vehicle from the fleet
-    const materialized = savedVehicles.find(
-      (v) => vehicleFeatures[v.vehicle_id]?.materialized
-    );
-    if (!materialized) {
-      setError("No materialized vehicle found. Save a vehicle first and wait for materialization.");
+    const vid = Number(benchVehicleId);
+    if (!vid || vid <= 0) {
+      setError("Enter a valid vehicle ID to benchmark.");
       return;
     }
     setBenchStoreLoading(true);
     setBenchStoreProgress(0);
     setError(null);
-    const timer = setInterval(
-      () => setBenchStoreProgress((p) => Math.min(p + 8, 90)),
-      200
-    );
+    const iterations = Math.max(10, Number(benchIterations) || 1000);
+    const estimatedMs = iterations * 0.015 * 1000;
+    const start = Date.now();
+    const timer = setInterval(() => {
+      const elapsed = Date.now() - start;
+      setBenchStoreProgress(Math.min(Math.round((elapsed / estimatedMs) * 95), 95));
+    }, 100);
     try {
-      const result = await benchmarkById(materialized.vehicle_id, 1000);
+      const result = await benchmarkById(vid, iterations);
       setBenchmarkStoreResult(result);
       setBenchStoreProgress(100);
     } catch (e) {
@@ -191,6 +247,11 @@ export default function Home() {
         ...prev,
         [result.vehicle_id]: { vehicle_id: result.vehicle_id, materialized: false } as ComputedFeatures,
       }));
+      if (!result.event_published) {
+        setError(
+          `Vehicle #${result.vehicle_id} saved, but feature materialization could not be triggered (Redis unavailable). Features must be materialized manually.`
+        );
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -204,25 +265,55 @@ export default function Home() {
       const result = await predictById(vehicleId);
       setVehiclePredictions((prev) => ({ ...prev, [vehicleId]: result }));
     } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message.includes("500")
-            ? `Vehicle #${vehicleId} not yet materialized. Run the feature pipeline first.`
-            : e.message
-          : "Prediction failed"
-      );
+      if (e instanceof Error) {
+        if (e.message.startsWith("[503]")) {
+          setError("No model loaded. Train and promote a model first.");
+        } else if (e.message.startsWith("[404]")) {
+          setError(
+            `Vehicle #${vehicleId} not yet materialized. Run the feature pipeline first.`
+          );
+        } else {
+          setError(e.message);
+        }
+      } else {
+        setError("Simulation failed");
+      }
     }
   };
 
   const handlePredictAll = async () => {
     setError(null);
-    for (const v of savedVehicles) {
-      try {
-        const result = await predictById(v.vehicle_id);
-        setVehiclePredictions((prev) => ({ ...prev, [v.vehicle_id]: result }));
-      } catch {
-        // Skip vehicles not yet materialized
+    const arrivals = savedVehicles.filter((v) => v.num_reservations === null);
+    const results = await Promise.allSettled(
+      arrivals.map((v) => predictById(v.vehicle_id))
+    );
+    const newPredictions: Record<number, PredictionResponse> = {};
+    results.forEach((result, i) => {
+      if (result.status === "fulfilled") {
+        newPredictions[arrivals[i].vehicle_id] = result.value;
       }
+      // Skip vehicles that failed (not yet materialized)
+    });
+    setVehiclePredictions((prev) => ({ ...prev, ...newPredictions }));
+  };
+
+  const handleDeleteVehicle = async (vehicleId: number) => {
+    setError(null);
+    try {
+      await deleteVehicle(vehicleId);
+      setSavedVehicles((prev) => prev.filter((v) => v.vehicle_id !== vehicleId));
+      setVehiclePredictions((prev) => {
+        const next = { ...prev };
+        delete next[vehicleId];
+        return next;
+      });
+      setVehicleFeatures((prev) => {
+        const next = { ...prev };
+        delete next[vehicleId];
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed");
     }
   };
 
@@ -230,17 +321,12 @@ export default function Home() {
     try {
       const vehicles = await listVehicles();
       setSavedVehicles(vehicles);
-      // Fetch computed features for each vehicle
+      // Fetch computed features for all vehicles in a single batch call
+      const allFeatures = await fetchAllVehicleFeatures();
       const features: Record<number, ComputedFeatures> = {};
-      await Promise.all(
-        vehicles.map(async (v) => {
-          try {
-            features[v.vehicle_id] = await fetchVehicleFeatures(v.vehicle_id);
-          } catch {
-            // vehicle may not be materialized yet
-          }
-        })
-      );
+      for (const f of allFeatures) {
+        features[f.vehicle_id] = f;
+      }
       setVehicleFeatures(features);
     } catch {
       // silently ignore — vehicles tab may not be active
@@ -251,15 +337,25 @@ export default function Home() {
     if (mounted) refreshVehicles();
   }, [mounted, refreshVehicles]);
 
-  // Poll for pending vehicles until all are materialized
+  // Poll for pending vehicles until all are materialized (timeout after 60s)
   useEffect(() => {
-    const hasPending = savedVehicles.some(
-      (v) => !vehicleFeatures[v.vehicle_id]?.materialized
+    // Only poll for pending new arrivals (fleet vehicles resolve from offline store instantly)
+    const pendingArrivals = savedVehicles.filter(
+      (v) => v.num_reservations === null && !vehicleFeatures[v.vehicle_id]?.materialized
     );
-    if (!hasPending || savedVehicles.length === 0) return;
+    if (pendingArrivals.length === 0) return;
+
+    let elapsed = 0;
+    const POLL_MS = 2000;
+    const TIMEOUT_MS = 60000;
 
     const interval = setInterval(async () => {
-      for (const v of savedVehicles) {
+      elapsed += POLL_MS;
+      if (elapsed > TIMEOUT_MS) {
+        clearInterval(interval);
+        return;
+      }
+      for (const v of pendingArrivals) {
         if (vehicleFeatures[v.vehicle_id]?.materialized) continue;
         try {
           const feat = await fetchVehicleFeatures(v.vehicle_id);
@@ -270,10 +366,21 @@ export default function Home() {
           // ignore
         }
       }
-    }, 2000);
+    }, POLL_MS);
 
     return () => clearInterval(interval);
   }, [savedVehicles, vehicleFeatures]);
+
+  // Auto-pick first materialized vehicle for the online store benchmark
+  useEffect(() => {
+    if (benchVehicleId) return; // already set
+    const materialized = savedVehicles.find(
+      (v) => vehicleFeatures[v.vehicle_id]?.materialized
+    );
+    if (materialized) {
+      setBenchVehicleId(String(materialized.vehicle_id));
+    }
+  }, [savedVehicles, vehicleFeatures, benchVehicleId]);
 
   const priceRatio =
     vehicle.recommended_price > 0
@@ -281,10 +388,23 @@ export default function Home() {
       : 0;
   const priceDiff = vehicle.actual_price - vehicle.recommended_price;
 
+  const filteredVehicles = savedVehicles.filter((v) => {
+    if (!fleetSearch) return true;
+    const q = fleetSearch.toLowerCase();
+    return (
+      v.vehicle_id.toString().includes(q) ||
+      v.actual_price.toString().includes(q)
+    );
+  });
+  const fleetVehicles = filteredVehicles.filter((v) => v.num_reservations !== null);
+  const newArrivals = filteredVehicles.filter((v) => v.num_reservations === null);
+  const displayedFleet = fleetVehicles.slice(0, 50);
+  const displayedArrivals = newArrivals.slice(0, 50);
+
   return (
     <main className="flex-1">
       {/* ── Hero header with Turo-inspired purple gradient ── */}
-      <div className="bg-gradient-to-br from-[#593CFB] via-[#7C63FC] to-[#4429D4] text-white">
+      <div className="bg-gradient-to-br from-[#593CFB] via-[#7C63FC] to-[#4429D4] dark:from-[#3D2AB0] dark:via-[#593CFB] dark:to-[#2E1C8A] text-white">
         <div className="mx-auto max-w-5xl px-6 py-12">
           <div className="flex items-start justify-between">
             <div>
@@ -297,7 +417,7 @@ export default function Home() {
                 </h1>
               </div>
               <p className="max-w-md text-base text-white/75">
-                Predict how many reservations a vehicle will get based on its
+                Simulate how many reservations a vehicle will get based on its
                 listing attributes. Powered by ML.
               </p>
             </div>
@@ -342,6 +462,45 @@ export default function Home() {
                   Reload champion model from MLflow
                 </TooltipContent>
               </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger>
+                  <a
+                    href="http://localhost:8100"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors hover:bg-white/25"
+                  >
+                    <BookOpen className="h-4 w-4" />
+                  </a>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  Documentation
+                </TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") setTheme(resolvedTheme === "dark" ? "light" : "dark");
+                    }}
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors hover:bg-white/25 cursor-pointer"
+                  >
+                    {mounted && resolvedTheme === "dark" ? (
+                      <Sun className="h-4 w-4" />
+                    ) : (
+                      <Moon className="h-4 w-4" />
+                    )}
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  {mounted && resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+                </TooltipContent>
+              </Tooltip>
             </div>
           </div>
         </div>
@@ -356,18 +515,18 @@ export default function Home() {
         )}
 
         <Tabs defaultValue="predict">
-          <TabsList className="mb-6 rounded-full bg-white shadow-sm border">
+          <TabsList className="mb-6 rounded-full bg-card shadow-sm border">
             <TabsTrigger
               value="predict"
               className="rounded-full data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
             >
-              Predict
+              Simulation
             </TabsTrigger>
             <TabsTrigger
               value="vehicles"
               className="rounded-full data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
             >
-              Fleet
+              Catalog
             </TabsTrigger>
             <TabsTrigger
               value="benchmark"
@@ -375,13 +534,19 @@ export default function Home() {
             >
               Benchmark
             </TabsTrigger>
+            <TabsTrigger
+              value="features"
+              className="rounded-full data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+            >
+              Feature Store
+            </TabsTrigger>
           </TabsList>
 
-          {/* ── Predict Tab ── */}
+          {/* ── Simulation Tab ── */}
           <TabsContent value="predict">
             <div className="grid gap-6 lg:grid-cols-5">
               {/* Vehicle form — takes 3/5 columns */}
-              <Card className="lg:col-span-3 shadow-md border-0 bg-white">
+              <Card className="lg:col-span-3 shadow-md border-0 bg-card">
                 <CardHeader className="pb-4">
                   <CardTitle className="text-lg">Vehicle Attributes</CardTitle>
                   <CardDescription>
@@ -461,7 +626,7 @@ export default function Home() {
                   {/* Listing quality section */}
                   <div className="space-y-5">
                     <div className="flex items-center gap-2">
-                      <Image className="h-4 w-4 text-primary" />
+                      <ImageIcon className="h-4 w-4 text-primary" />
                       <h3 className="text-sm font-semibold">Listing Quality</h3>
                     </div>
 
@@ -566,10 +731,10 @@ export default function Home() {
                       {loading ? (
                         <span className="flex items-center gap-2">
                           <Loader2 className="h-4 w-4 animate-spin" />
-                          Predicting...
+                          Simulating...
                         </span>
                       ) : (
-                        "Predict"
+                        "Simulate"
                       )}
                     </Button>
                     <Tooltip>
@@ -586,7 +751,7 @@ export default function Home() {
                           <Save className={`h-5 w-5 ${saving ? "animate-pulse" : ""}`} />
                         </div>
                       </TooltipTrigger>
-                      <TooltipContent>Save to fleet</TooltipContent>
+                      <TooltipContent>Save to catalog</TooltipContent>
                     </Tooltip>
                   </div>
                 </CardContent>
@@ -594,7 +759,7 @@ export default function Home() {
 
               {/* Result — takes 2/5 columns */}
               <div className="lg:col-span-2 space-y-6">
-                <Card className="shadow-md border-0 bg-white overflow-hidden">
+                <Card className="shadow-md border-0 bg-card overflow-hidden">
                   <div className="bg-gradient-to-br from-primary/5 to-primary/10 p-8">
                     <CardDescription className="text-center mb-4">
                       Estimated Reservations
@@ -632,7 +797,7 @@ export default function Home() {
                 </Card>
 
                 {/* Quick insights card */}
-                <Card className="shadow-md border-0 bg-white">
+                <Card className="shadow-md border-0 bg-card">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm">Listing Summary</CardTitle>
                   </CardHeader>
@@ -699,17 +864,35 @@ export default function Home() {
           {/* ── Benchmark Tab ── */}
           <TabsContent value="benchmark">
             <div className="space-y-6">
-              <Card className="shadow-md border-0 bg-white">
+              <Card className="shadow-md border-0 bg-card">
                 <CardHeader>
                   <CardTitle className="text-lg">Latency Benchmark</CardTitle>
                   <CardDescription>
                     Compare inference latency between two paths: raw feature computation
-                    vs online store lookup (Redis). Each runs 1,000 iterations measuring
-                    end-to-end time from features to prediction.
+                    vs online store lookup (Redis).
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex gap-3">
+                  <div className="flex gap-3 items-end">
+                    <div className="space-y-1">
+                      <Label htmlFor="bench-iterations" className="text-xs">Iterations</Label>
+                      <Input
+                        id="bench-iterations"
+                        type="number"
+                        min={10}
+                        max={100000}
+                        className="w-28 h-9"
+                        value={benchIterations}
+                        onChange={(e) => setBenchIterations(e.target.value)}
+                        onBlur={() => {
+                          const n = Number(benchIterations);
+                          if (!n || n < 10) setBenchIterations("10");
+                          else if (n > 100000) setBenchIterations("100000");
+                          else setBenchIterations(String(Math.round(n)));
+                        }}
+                        disabled={benchLoading || benchStoreLoading}
+                      />
+                    </div>
                     <Button
                       onClick={handleBenchmark}
                       disabled={benchLoading || (mounted && !health)}
@@ -719,12 +902,21 @@ export default function Home() {
                     </Button>
                     <Button
                       onClick={handleBenchmarkStore}
-                      disabled={benchStoreLoading || (mounted && !health)}
-                      variant="outline"
-                      className="rounded-full"
+                      disabled={benchStoreLoading || (mounted && !health) || !benchVehicleId}
+                      className="rounded-full bg-turo-teal text-white shadow-lg shadow-turo-teal/25 hover:bg-turo-teal/90"
                     >
                       {benchStoreLoading ? "Running..." : "Online Store"}
                     </Button>
+                    {!benchVehicleId && savedVehicles.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        No materialized vehicle found — run the feature pipeline first.
+                      </p>
+                    )}
+                    {savedVehicles.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Save a vehicle in the Catalog to enable Online Store benchmark.
+                      </p>
+                    )}
                   </div>
                   {(benchLoading || benchStoreLoading) && (
                     <Progress
@@ -738,7 +930,7 @@ export default function Home() {
               {/* Results side by side */}
               <div className="grid gap-6 lg:grid-cols-2">
                 {/* Raw features benchmark */}
-                <Card className={`shadow-md border-0 bg-white ${benchmarkResult ? "" : "opacity-50"}`}>
+                <Card className={`shadow-md border-0 bg-card ${benchmarkResult ? "" : "opacity-50"}`}>
                   <CardHeader className="pb-3">
                     <div className="flex items-center gap-2">
                       <Badge className="rounded-full bg-primary text-primary-foreground">Raw</Badge>
@@ -790,7 +982,7 @@ export default function Home() {
                 </Card>
 
                 {/* Online store benchmark */}
-                <Card className={`shadow-md border-0 bg-white ${benchmarkStoreResult ? "" : "opacity-50"}`}>
+                <Card className={`shadow-md border-0 bg-card ${benchmarkStoreResult ? "" : "opacity-50"}`}>
                   <CardHeader className="pb-3">
                     <div className="flex items-center gap-2">
                       <Badge className="rounded-full bg-turo-teal text-white">Store</Badge>
@@ -835,7 +1027,7 @@ export default function Home() {
                       </div>
                     ) : (
                       <p className="text-sm text-muted-foreground text-center py-6">
-                        Click &quot;Online Store&quot; to run (requires a saved vehicle)
+                        Click &quot;Online Store&quot; to run
                       </p>
                     )}
                   </CardContent>
@@ -844,7 +1036,7 @@ export default function Home() {
 
               {/* Comparison summary */}
               {benchmarkResult && benchmarkStoreResult && (
-                <Card className="shadow-md border-0 bg-white">
+                <Card className="shadow-md border-0 bg-card">
                   <CardContent className="pt-6">
                     <div className="flex items-center justify-center gap-6 text-sm">
                       <div className="text-center">
@@ -875,165 +1067,503 @@ export default function Home() {
             </div>
           </TabsContent>
 
-          {/* ── Vehicles Tab (Fleet Dashboard) ── */}
+          {/* ── Catalog Tab ── */}
           <TabsContent value="vehicles">
-            <Card className="shadow-md border-0 bg-white">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-lg">Fleet</CardTitle>
-                    <CardDescription>
-                      Saved vehicles with predictions from the online feature store.
-                      Save vehicles from the Predict tab using the
-                      <Save className="inline h-3.5 w-3.5 mx-1 -mt-0.5" />
-                      button.
-                    </CardDescription>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {savedVehicles.length > 0 && (
-                      <Button
-                        size="sm"
-                        className="rounded-full"
-                        onClick={handlePredictAll}
-                        disabled={mounted && !health}
-                      >
-                        Predict All
-                      </Button>
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={refreshVehicles}
-                      className="rounded-full"
-                    >
-                      Refresh
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {savedVehicles.length === 0 ? (
-                  <div className="text-center py-12">
-                    <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-                      <Car className="h-8 w-8 text-muted-foreground/50" />
+            <div className="space-y-6">
+              {/* Header card with search and actions */}
+              <Card className="shadow-md border-0 bg-card">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="text-lg">
+                        Vehicle Catalog
+                        <span className="ml-2 text-sm font-normal text-muted-foreground">
+                          {savedVehicles.length} vehicles
+                        </span>
+                      </CardTitle>
+                      <CardDescription>
+                        Browse fleet vehicles with reservation history and
+                        new arrivals awaiting their first bookings.
+                      </CardDescription>
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      No vehicles in your fleet yet.
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Configure a vehicle in the Predict tab and save it.
-                    </p>
                   </div>
-                ) : (
-                  <div className="space-y-3">
-                    {savedVehicles.map((v) => {
-                      const pred = vehiclePredictions[v.vehicle_id];
-                      const feat = vehicleFeatures[v.vehicle_id];
-                      return (
-                        <div
-                          key={v.vehicle_id}
-                          className="rounded-xl border overflow-hidden hover:bg-muted/30 transition-colors"
-                        >
-                          <div className="flex items-center justify-between p-4">
-                            <div className="space-y-1.5">
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold">
-                                  #{v.vehicle_id}
-                                </span>
-                                <Badge variant="outline" className="rounded-full text-xs font-mono">
-                                  ${v.actual_price}/day
-                                </Badge>
-                                {v.technology === 1 && (
-                                  <Badge variant="secondary" className="rounded-full text-xs">
-                                    Tech
-                                  </Badge>
-                                )}
-                                {v.street_parked === 1 && (
-                                  <Badge variant="secondary" className="rounded-full text-xs">
-                                    Street
-                                  </Badge>
-                                )}
-                                {feat?.materialized ? (
-                                  <Badge className="rounded-full text-xs bg-turo-teal text-white">
-                                    Materialized
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="outline" className="rounded-full text-xs text-muted-foreground">
-                                    Pending
-                                  </Badge>
-                                )}
-                              </div>
-                              <p className="text-xs text-muted-foreground">
-                                Rec. ${v.recommended_price} &middot;{" "}
-                                {v.num_images} photos &middot;{" "}
-                                {v.description} chars description
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-4">
-                              {pred ? (
-                                <div className="text-right">
-                                  <div className="text-2xl font-bold tabular-nums text-primary">
-                                    {pred.predicted_reservations}
-                                  </div>
-                                  <p className="text-[10px] text-muted-foreground">
-                                    reservations (v{pred.model_version})
-                                  </p>
-                                </div>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="rounded-full"
-                                  onClick={() => handlePredictById(v.vehicle_id)}
-                                  disabled={(mounted && !health) || !feat?.materialized}
-                                >
-                                  Predict
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Computed features panel */}
-                          {feat?.materialized && (
-                            <div className="border-t bg-muted/20 px-4 py-3">
-                              <p className="text-[10px] font-medium text-muted-foreground mb-2 uppercase tracking-wider">
-                                Computed Features (from online store)
-                              </p>
-                              <div className="grid grid-cols-4 gap-3">
-                                <div>
-                                  <p className="text-[10px] text-muted-foreground">price_diff</p>
-                                  <p className="text-sm font-mono font-semibold">
-                                    {feat.price_diff !== null ? (feat.price_diff >= 0 ? "+" : "") + feat.price_diff.toFixed(2) : "—"}
-                                  </p>
-                                </div>
-                                <div>
-                                  <p className="text-[10px] text-muted-foreground">price_ratio</p>
-                                  <p className="text-sm font-mono font-semibold">
-                                    {feat.price_ratio !== null ? feat.price_ratio.toFixed(3) : "—"}
-                                  </p>
-                                </div>
-                                <div>
-                                  <p className="text-[10px] text-muted-foreground">technology</p>
-                                  <p className="text-sm font-mono font-semibold">
-                                    {feat.technology ?? "—"}
-                                  </p>
-                                </div>
-                                <div>
-                                  <p className="text-[10px] text-muted-foreground">num_images</p>
-                                  <p className="text-sm font-mono font-semibold">
-                                    {feat.num_images ?? "—"}
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                </CardHeader>
+                {savedVehicles.length > 0 && (
+                  <CardContent className="pt-0">
+                    <Input
+                      placeholder="Search by ID or price..."
+                      value={fleetSearch}
+                      onChange={(e) => setFleetSearch(e.target.value)}
+                      className="max-w-xs"
+                    />
+                  </CardContent>
                 )}
-              </CardContent>
-            </Card>
+              </Card>
+
+              {savedVehicles.length === 0 ? (
+                <Card className="shadow-md border-0 bg-card">
+                  <CardContent className="pt-6">
+                    <div className="text-center py-12">
+                      <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+                        <Car className="h-8 w-8 text-muted-foreground/50" />
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        No vehicles in your catalog yet.
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Configure a vehicle in the Simulation tab and save it, or
+                        run the feature pipeline to seed the catalog.
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                <>
+                  {/* ── New Arrivals Section ── */}
+                  {newArrivals.length > 0 && (
+                    <Card className="shadow-md border-0 bg-card">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-turo-teal/10">
+                              <Plus className="h-4 w-4 text-turo-teal" />
+                            </div>
+                            <CardTitle className="text-base">
+                              New Arrivals
+                              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                                {newArrivals.length} vehicles
+                              </span>
+                            </CardTitle>
+                          </div>
+                          <Button
+                            size="sm"
+                            className="rounded-full"
+                            onClick={handlePredictAll}
+                            disabled={mounted && !health}
+                          >
+                            Simulate All
+                          </Button>
+                        </div>
+                        <CardDescription className="text-xs">
+                          Vehicles with no reservation history yet &mdash; features available after real-time materialization or next pipeline run
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        {displayedArrivals.length < newArrivals.length && (
+                          <p className="text-xs text-muted-foreground mb-3">
+                            Showing 50 of {newArrivals.length} vehicles. Use search to narrow down.
+                          </p>
+                        )}
+                        <div className="space-y-3">
+                          {displayedArrivals.map((v) => {
+                            const pred = vehiclePredictions[v.vehicle_id];
+                            const feat = vehicleFeatures[v.vehicle_id];
+                            return (
+                              <div
+                                key={v.vehicle_id}
+                                className="rounded-xl border overflow-hidden hover:bg-muted/30 transition-colors"
+                              >
+                                <div className="flex items-center justify-between p-4">
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-semibold">
+                                        #{v.vehicle_id}
+                                      </span>
+                                      <Badge variant="outline" className="rounded-full text-xs font-mono">
+                                        ${v.actual_price}/day
+                                      </Badge>
+                                      {v.technology === 1 && (
+                                        <Badge variant="secondary" className="rounded-full text-xs">
+                                          Tech
+                                        </Badge>
+                                      )}
+                                      {feat?.materialized ? (
+                                        <Badge variant="outline" className="rounded-full text-xs text-turo-teal border-turo-teal/30">
+                                          {feat.store === "online" ? "Online Store" : "Offline Store"}
+                                        </Badge>
+                                      ) : (
+                                        <Badge variant="outline" className="rounded-full text-xs text-amber-500 border-amber-500/30">
+                                          Pending
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                      Rec. ${v.recommended_price} &middot;{" "}
+                                      {v.num_images} photos &middot;{" "}
+                                      {v.description} chars
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {pred ? (
+                                      <div className="text-right">
+                                        <div className="text-2xl font-bold tabular-nums text-primary">
+                                          {pred.predicted_reservations}
+                                        </div>
+                                        <p className="text-[10px] text-muted-foreground">
+                                          predicted (v{pred.model_version})
+                                        </p>
+                                      </div>
+                                    ) : (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="rounded-full"
+                                        onClick={() => handlePredictById(v.vehicle_id)}
+                                        disabled={(mounted && !health) || !feat?.materialized}
+                                      >
+                                        Simulate
+                                      </Button>
+                                    )}
+                                    <Tooltip>
+                                      <TooltipTrigger>
+                                        <Button
+                                          size="sm"
+                                          variant="ghost"
+                                          className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                                          onClick={() => handleDeleteVehicle(v.vehicle_id)}
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>Remove vehicle</TooltipContent>
+                                    </Tooltip>
+                                  </div>
+                                </div>
+
+                                {/* Computed features panel */}
+                                {feat?.materialized && (
+                                  <div className="border-t bg-muted/20 px-4 py-3">
+                                    <p className="text-[10px] font-medium text-muted-foreground mb-2 uppercase tracking-wider">
+                                      Features
+                                      <span className="ml-1.5 font-normal normal-case">
+                                        {feat.store === "online"
+                                          ? "computed on save, read from Redis"
+                                          : feat.store === "offline"
+                                            ? "loaded from offline store (Parquet)"
+                                            : ""}
+                                      </span>
+                                    </p>
+                                    <div className="grid grid-cols-4 gap-3">
+                                      <div>
+                                        <p className="text-[10px] text-muted-foreground">price_diff</p>
+                                        <p className="text-sm font-mono font-semibold">
+                                          {feat.price_diff !== null ? (feat.price_diff >= 0 ? "+" : "") + feat.price_diff.toFixed(2) : "\u2014"}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] text-muted-foreground">price_ratio</p>
+                                        <p className="text-sm font-mono font-semibold">
+                                          {feat.price_ratio !== null ? feat.price_ratio.toFixed(3) : "\u2014"}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] text-muted-foreground">technology</p>
+                                        <p className="text-sm font-mono font-semibold">
+                                          {feat.technology ?? "\u2014"}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] text-muted-foreground">num_images</p>
+                                        <p className="text-sm font-mono font-semibold">
+                                          {feat.num_images ?? "\u2014"}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* ── Fleet Section ── */}
+                  <Card className="shadow-md border-0 bg-card">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
+                          <Car className="h-4 w-4 text-primary" />
+                        </div>
+                        <CardTitle className="text-base">
+                          Fleet
+                          <span className="ml-2 text-sm font-normal text-muted-foreground">
+                            {fleetVehicles.length} vehicles
+                          </span>
+                        </CardTitle>
+                      </div>
+                      <CardDescription className="text-xs">
+                        Vehicles with observed reservation history &mdash; features from the batch pipeline
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {fleetVehicles.length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-6">
+                          {fleetSearch
+                            ? "No fleet vehicles match your search."
+                            : "No fleet vehicles yet. Run the feature pipeline to seed the dataset."}
+                        </p>
+                      ) : (
+                        <>
+                          {displayedFleet.length < fleetVehicles.length && (
+                            <p className="text-xs text-muted-foreground mb-3">
+                              Showing 50 of {fleetVehicles.length} vehicles. Use search to narrow down.
+                            </p>
+                          )}
+                          <div className="space-y-3">
+                            {displayedFleet.map((v) => {
+                              const feat = vehicleFeatures[v.vehicle_id];
+                              return (
+                                <div
+                                  key={v.vehicle_id}
+                                  className="rounded-xl border overflow-hidden hover:bg-muted/30 transition-colors"
+                                >
+                                  <div className="flex items-center justify-between p-4">
+                                    <div className="space-y-1.5">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-semibold">
+                                          #{v.vehicle_id}
+                                        </span>
+                                        <Badge variant="outline" className="rounded-full text-xs font-mono">
+                                          ${v.actual_price}/day
+                                        </Badge>
+                                        {v.technology === 1 && (
+                                          <Badge variant="secondary" className="rounded-full text-xs">
+                                            Tech
+                                          </Badge>
+                                        )}
+                                        {feat?.materialized ? (
+                                          <Badge variant="outline" className="rounded-full text-xs text-turo-teal border-turo-teal/30">
+                                            {feat.store === "offline" ? "Offline Store" : "Online Store"}
+                                          </Badge>
+                                        ) : (
+                                          <Badge variant="outline" className="rounded-full text-xs text-muted-foreground">
+                                            Pending
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      <p className="text-xs text-muted-foreground">
+                                        Rec. ${v.recommended_price} &middot;{" "}
+                                        {v.num_images} photos &middot;{" "}
+                                        {v.description} chars
+                                      </p>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                      <div className="text-right">
+                                        <div className="text-2xl font-bold tabular-nums text-primary">
+                                          {v.num_reservations}
+                                        </div>
+                                        <p className="text-[10px] text-muted-foreground">
+                                          reservations
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Computed features panel */}
+                                  {feat?.materialized && (
+                                    <div className="border-t bg-muted/20 px-4 py-3">
+                                      <p className="text-[10px] font-medium text-muted-foreground mb-2 uppercase tracking-wider">
+                                        Features
+                                        <span className="ml-1.5 font-normal normal-case">
+                                          {feat.store === "online"
+                                            ? "computed on save, read from Redis"
+                                            : feat.store === "offline"
+                                              ? "loaded from offline store (Parquet)"
+                                              : ""}
+                                        </span>
+                                      </p>
+                                      <div className="grid grid-cols-4 gap-3">
+                                        <div>
+                                          <p className="text-[10px] text-muted-foreground">price_diff</p>
+                                          <p className="text-sm font-mono font-semibold">
+                                            {feat.price_diff !== null ? (feat.price_diff >= 0 ? "+" : "") + feat.price_diff.toFixed(2) : "\u2014"}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-[10px] text-muted-foreground">price_ratio</p>
+                                          <p className="text-sm font-mono font-semibold">
+                                            {feat.price_ratio !== null ? feat.price_ratio.toFixed(3) : "\u2014"}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-[10px] text-muted-foreground">technology</p>
+                                          <p className="text-sm font-mono font-semibold">
+                                            {feat.technology ?? "\u2014"}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-[10px] text-muted-foreground">num_images</p>
+                                          <p className="text-sm font-mono font-semibold">
+                                            {feat.num_images ?? "\u2014"}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </CardContent>
+                  </Card>
+                </>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* ── Feature Store Tab ── */}
+          <TabsContent value="features">
+            {(() => {
+              const allFeatures = Object.values(vehicleFeatures);
+              const offlineCount = allFeatures.filter((f) => f.store === "offline").length;
+              const onlineCount = allFeatures.filter((f) => f.store === "online").length;
+              const pendingCount = savedVehicles.length - allFeatures.filter((f) => f.materialized).length;
+
+              return (
+                <div className="space-y-6">
+                  {/* Store overview cards */}
+                  <div className="grid gap-6 md:grid-cols-2">
+                    {/* Offline store */}
+                    <Card className="shadow-md border-0 bg-card">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+                            <HardDrive className="h-5 w-5 text-primary" />
+                          </div>
+                          <div>
+                            <CardTitle className="text-base">Offline Store</CardTitle>
+                            <CardDescription className="text-xs">Batch features for training &amp; fleet display</CardDescription>
+                          </div>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between py-2 border-b">
+                            <span className="text-sm text-muted-foreground">Status</span>
+                            <Badge variant="outline" className={`rounded-full text-xs ${storeInfo?.offline_store.available ? "text-primary border-primary/30" : "text-destructive border-destructive/30"}`}>
+                              {storeInfo?.offline_store.available ? "Available" : "Unavailable"}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between py-2 border-b">
+                            <span className="text-sm text-muted-foreground">Type</span>
+                            <span className="text-sm font-medium font-mono">{storeInfo?.offline_store.type ?? "file (Parquet)"}</span>
+                          </div>
+                          <div className="flex items-center justify-between py-2 border-b">
+                            <span className="text-sm text-muted-foreground">Vehicles</span>
+                            <span className="text-sm font-bold tabular-nums text-primary">{offlineCount}</span>
+                          </div>
+                          <div className="flex items-center justify-between py-2 border-b">
+                            <span className="text-sm text-muted-foreground">Location</span>
+                            <span className="text-xs font-mono text-muted-foreground truncate max-w-[200px]">{storeInfo?.offline_store.path ?? "\u2014"}</span>
+                          </div>
+                          <div className="flex items-center justify-between py-2 border-b">
+                            <span className="text-sm text-muted-foreground">Size</span>
+                            <span className="text-sm font-mono">{storeInfo?.offline_store.size_bytes != null ? (storeInfo.offline_store.size_bytes / 1024).toFixed(1) + " KB" : "\u2014"}</span>
+                          </div>
+                          <div className="flex items-center justify-between py-2">
+                            <span className="text-sm text-muted-foreground">Last modified</span>
+                            <span className="text-xs font-mono text-muted-foreground">{storeInfo?.offline_store.last_modified != null ? new Date(storeInfo.offline_store.last_modified * 1000).toLocaleString() : "\u2014"}</span>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {/* Online store */}
+                    <Card className="shadow-md border-0 bg-card">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-turo-teal/10">
+                            <Server className="h-5 w-5 text-turo-teal" />
+                          </div>
+                          <div>
+                            <CardTitle className="text-base">Online Store</CardTitle>
+                            <CardDescription className="text-xs">Real-time features for inference on new arrivals</CardDescription>
+                          </div>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between py-2 border-b">
+                            <span className="text-sm text-muted-foreground">Status</span>
+                            <Badge variant="outline" className={`rounded-full text-xs ${storeInfo?.online_store.available ? "text-turo-teal border-turo-teal/30" : "text-destructive border-destructive/30"}`}>
+                              {storeInfo?.online_store.available ? "Connected" : "Disconnected"}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between py-2 border-b">
+                            <span className="text-sm text-muted-foreground">Type</span>
+                            <span className="text-sm font-medium font-mono">{storeInfo?.online_store.type ?? "redis"}</span>
+                          </div>
+                          <div className="flex items-center justify-between py-2 border-b">
+                            <span className="text-sm text-muted-foreground">Vehicles</span>
+                            <span className="text-sm font-bold tabular-nums text-turo-teal">{onlineCount}</span>
+                          </div>
+                          <div className="flex items-center justify-between py-2 border-b">
+                            <span className="text-sm text-muted-foreground">Location</span>
+                            <span className="text-xs font-mono text-muted-foreground truncate max-w-[200px]">{storeInfo?.online_store.redis_url ?? "\u2014"}</span>
+                          </div>
+                          <div className="flex items-center justify-between py-2 border-b">
+                            <span className="text-sm text-muted-foreground">Size</span>
+                            <span className="text-sm font-mono">{storeInfo?.online_store.used_memory_human ?? "\u2014"}</span>
+                          </div>
+                          <div className="flex items-center justify-between py-2">
+                            <span className="text-sm text-muted-foreground">Pending</span>
+                            <span className={`text-sm font-bold tabular-nums ${pendingCount > 0 ? "text-amber-500" : ""}`}>{pendingCount}</span>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Feature view definition */}
+                  {storeInfo?.feature_view && (
+                    <Card className="shadow-md border-0 bg-card">
+                      <CardHeader>
+                        <CardTitle className="text-base">Feature View: {storeInfo.feature_view.name}</CardTitle>
+                        <CardDescription className="text-xs">
+                          Entity: <span className="font-mono">{storeInfo.feature_view.entity}</span> (key: <span className="font-mono">{storeInfo.feature_view.entity_key}</span>) &middot; TTL: {storeInfo.feature_view.ttl_days} days
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                          {storeInfo.feature_view.features.map((feat) => {
+                            const isDerived = feat === "price_diff" || feat === "price_ratio";
+                            return (
+                              <div
+                                key={feat}
+                                className={`rounded-lg border px-3 py-2 ${
+                                  isDerived
+                                    ? "border-turo-teal/30 bg-turo-teal/5"
+                                    : "bg-muted/30"
+                                }`}
+                              >
+                                <p className={`text-xs font-mono font-medium ${isDerived ? "text-turo-teal" : ""}`}>{feat}</p>
+                                {isDerived ? (
+                                  <p className="text-[10px] text-muted-foreground font-mono">
+                                    {feat === "price_diff"
+                                      ? "actual_price − recommended_price"
+                                      : "actual_price / recommended_price"}
+                                  </p>
+                                ) : (
+                                  <p className="text-[10px] text-muted-foreground">raw attribute</p>
+                                )}
+                              </div>
+                            );
+                          })}
+                          <div className="rounded-lg border border-dashed bg-muted/10 px-3 py-2">
+                            <p className="text-xs font-mono font-medium text-muted-foreground">{storeInfo.feature_view.label}</p>
+                            <p className="text-[10px] text-muted-foreground">label (target)</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              );
+            })()}
           </TabsContent>
         </Tabs>
       </div>
@@ -1044,7 +1574,15 @@ export default function Home() {
           <span>Vroom Forecast &mdash; MLOps Take-Home</span>
           <div className="flex items-center gap-4">
             <a
-              href="http://localhost:8000/docs"
+              href="http://localhost:8100"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-primary transition-colors"
+            >
+              Docs
+            </a>
+            <a
+              href={`${API_URL}/docs`}
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-primary transition-colors"

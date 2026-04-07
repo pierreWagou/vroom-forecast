@@ -57,8 +57,10 @@ class TestPromote:
         client.get_model_version.return_value = self._make_mv("1")
         client.get_run.return_value = self._make_run("cv_mae_mean", 2.5)
 
-        # No champion
-        client.get_model_version_by_alias.side_effect = MlflowException("not found")
+        # No champion — simulate the real MlflowException with error_code attribute
+        no_champion_exc = MlflowException("Registered model alias 'champion' not found.")
+        no_champion_exc.error_code = "RESOURCE_DOES_NOT_EXIST"
+        client.get_model_version_by_alias.side_effect = no_champion_exc
 
         result = promote(
             mlflow_uri="http://fake",

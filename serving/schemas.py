@@ -1,5 +1,7 @@
 """Request and response schemas for the prediction API."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -84,10 +86,15 @@ class ReloadResponse(BaseModel):
 class SaveVehicleResponse(BaseModel):
     vehicle_id: int
     status: str
+    event_published: bool = True  # False if Redis was unavailable
 
 
 class VehicleRecord(BaseModel):
-    """A stored vehicle with its ID and attributes."""
+    """A stored vehicle with its ID, attributes, source, and reservation count.
+
+    num_reservations is None for new arrivals (no observation yet) and an int
+    (including 0) for vehicles with observed outcomes.
+    """
 
     vehicle_id: int
     technology: int
@@ -96,10 +103,12 @@ class VehicleRecord(BaseModel):
     num_images: int
     street_parked: int
     description: int
+    source: str = "csv"  # "csv" or "ui"
+    num_reservations: int | None = None
 
 
 class ComputedFeatures(BaseModel):
-    """Features as computed by the feature pipeline and stored in the online store."""
+    """Features as computed by the feature pipeline and stored in the feature store."""
 
     vehicle_id: int
     technology: int | None = None
@@ -111,3 +120,4 @@ class ComputedFeatures(BaseModel):
     price_diff: float | None = None
     price_ratio: float | None = None
     materialized: bool = False
+    store: Literal["offline", "online", "none"] = "none"

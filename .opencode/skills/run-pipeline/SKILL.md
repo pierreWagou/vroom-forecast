@@ -7,30 +7,38 @@ description: How to run services locally — all pipelines, Docker services, and
 
 Start all services:
 ```bash
-mprocs                  # MLflow, Redis, Airflow, Serving, UI, Jupyter
-docker compose up       # Just Docker services (no UI or Jupyter)
+mprocs                  # MLflow, Redis, Airflow, Serving, UI, Jupyter, Docs
+docker compose up       # Just Docker services (no UI, Jupyter, or Docs)
 ```
 
 ## Running Pipelines Locally
 
-Feature materialization:
+> **Note:** Feature materialization and offline-store training require Docker
+> services (Redis, MLflow). Use `docker compose up -d mlflow redis` first,
+> or run the full pipeline via Airflow (see below).
+
+Feature seeding + materialization (requires Docker services running):
 ```bash
-cd features && uv run python pipeline.py \
+# Set Feast env vars for local dev (feature_store.yaml uses these)
+export FEAST_REGISTRY=../feast-data/registry.db
+export FEAST_REDIS=localhost:6379
+
+# Seed the database from CSVs (one-time, idempotent)
+cd features && uv run python seed.py \
     --data-dir ../data \
-    --feast-repo feature_repo
+    --db ../feast-data/vehicles.db
+
+# Compute and materialize features
+cd features && uv run python pipeline.py \
+    --db ../feast-data/vehicles.db \
+    --feast-repo feature_repo \
+    --parquet-path ../feast-data/vehicle_features.parquet
 ```
 
-Training (from offline store):
+Training (requires materialization first):
 ```bash
 uv run --project training python -m training \
-    --feature-store /feast-data/vehicle_features.parquet \
-    --mlflow-uri http://localhost:5001
-```
-
-Training (from CSV fallback):
-```bash
-uv run --project training python -m training \
-    --data-dir data \
+    --feature-store feast-data/vehicle_features.parquet \
     --mlflow-uri http://localhost:5001
 ```
 
@@ -46,21 +54,29 @@ Serving (Ray Serve):
 uv run --project serving python -m serving
 ```
 
-## Running via Airflow
+## Running via Airflow (Recommended)
+
+The easiest path is to use Airflow inside Docker, which handles seeding,
+materialization, training, and promotion in the correct order:
 
 ```bash
+# Trigger the full pipeline (materialize -> training -> promotion auto-chains)
 docker compose exec airflow airflow dags trigger vroom_forecast_materialize
+
+# Or trigger individual steps
 docker compose exec airflow airflow dags trigger vroom_forecast_training
 docker compose exec airflow airflow dags trigger vroom_forecast_promotion
 ```
+
+Airflow credentials: `admin` / `admin`
 
 ## Airflow DAGs
 
 | DAG | Schedule | Description |
 |-----|----------|-------------|
-| `vroom_forecast_materialize` | `0 1 * * *` (daily) | Compute features → Parquet + Redis |
-| `vroom_forecast_training` | `0 2 * * 0` (Sundays) | Train from offline store → register candidate |
-| `vroom_forecast_promotion` | None (event-driven) | Compare candidate vs champion → promote |
+| `vroom_forecast_materialize` | `0 1 * * *` (daily) | Seed DB + compute features -> Parquet (all) + Redis (new arrivals) |
+| `vroom_forecast_training` | Dataset-driven (after materialize) | Train from offline store -> register candidate |
+| `vroom_forecast_promotion` | None (event-driven) | Compare candidate vs champion -> promote |
 
 ## Ports
 
@@ -74,6 +90,7 @@ docker compose exec airflow airflow dags trigger vroom_forecast_promotion
 | Redis | localhost:6379 |
 | Redis Insight | http://localhost:5540 |
 | UI (Next.js) | http://localhost:3000 |
+| Docs (MkDocs) | http://localhost:8100 |
 | Jupyter | http://localhost:8888 |
 
 ## Dev Tools Setup

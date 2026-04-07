@@ -116,12 +116,12 @@ class TestComputeFeatures:
         assert "event_timestamp" in df.columns
 
     def test_vehicles_with_no_reservations(self, tmp_path: Path) -> None:
-        """Vehicle with no reservations should get num_reservations=0."""
+        """Fleet vehicle (csv) with no reservations should get num_reservations=0."""
         db_path = str(tmp_path / "test2.db")
         conn = init_db(db_path)
         conn.execute(
             "INSERT INTO vehicles (technology, actual_price, recommended_price, "
-            "num_images, street_parked, description, source) VALUES (1, 45, 50, 8, 0, 250, 'test')"
+            "num_images, street_parked, description, source) VALUES (1, 45, 50, 8, 0, 250, 'csv')"
         )
         conn.commit()
         conn.close()
@@ -129,6 +129,21 @@ class TestComputeFeatures:
         vehicles, reservations = load_from_db(db_path)
         df = compute_features(vehicles, reservations)
         assert df.iloc[0]["num_reservations"] == 0
+
+    def test_new_arrival_has_null_reservations(self, tmp_path: Path) -> None:
+        """UI vehicle with no reservations should get num_reservations=NULL."""
+        db_path = str(tmp_path / "test3.db")
+        conn = init_db(db_path)
+        conn.execute(
+            "INSERT INTO vehicles (technology, actual_price, recommended_price, "
+            "num_images, street_parked, description, source) VALUES (1, 45, 50, 8, 0, 250, 'ui')"
+        )
+        conn.commit()
+        conn.close()
+
+        vehicles, reservations = load_from_db(db_path)
+        df = compute_features(vehicles, reservations)
+        assert pd.isna(df.iloc[0]["num_reservations"])
 
 
 # ── write_parquet ────────────────────────────────────────────────────────────

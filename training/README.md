@@ -8,7 +8,6 @@ reservation counts from listing attributes.
 ```mermaid
 graph LR
     PQ[Parquet<br/>offline store] -->|--feature-store| Train
-    CSV[data/*.csv] -->|--data-dir<br/>fallback| Train
     Train -->|log metrics + model| MLflow[(MLflow)]
     Train -->|set candidate alias| MLflow
 ```
@@ -16,20 +15,15 @@ graph LR
 ## Running
 
 ```bash
-# From the offline feature store (preferred — uses materialized features):
+# From the offline feature store (materialized by the feature pipeline):
 uv run --project training python -m training \
-    --feature-store /feast-data/vehicle_features.parquet \
-    --mlflow-uri http://localhost:5001
-
-# From raw CSVs (fallback — computes features locally):
-uv run --project training python -m training \
-    --data-dir data \
+    --feature-store feast-data/vehicle_features.parquet \
     --mlflow-uri http://localhost:5001
 ```
 
 ## What it does
 
-1. Loads features from the offline store (Parquet) or raw CSVs (fallback)
+1. Loads features from the offline store (Parquet file written by the feature pipeline)
 2. Trains a `RandomForestRegressor` (200 trees, max_depth=10) with 5-fold CV
 3. Logs params, metrics, and model artifact to MLflow
 4. Registers the model version and sets the `candidate` alias
@@ -38,7 +32,7 @@ uv run --project training python -m training \
 
 - `train.py` — Pipeline logic (load, train, evaluate, register)
 - `__main__.py` — CLI entry point
-- `pyproject.toml` — Dependencies: pandas, scikit-learn, mlflow, numpy, pyarrow
+- `pyproject.toml` — Dependencies: pandas, scikit-learn, mlflow, pyarrow
 
 ## Feature columns
 

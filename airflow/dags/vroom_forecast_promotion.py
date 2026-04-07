@@ -51,4 +51,5 @@ with DAG(
             f"--mlflow-uri {MLFLOW_URI} "
             f"--redis-url {REDIS_URL}"
         ),
+        execution_timeout=pendulum.duration(minutes=10),
     )

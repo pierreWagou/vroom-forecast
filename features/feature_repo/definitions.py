@@ -7,7 +7,7 @@ and serving (online/Redis) read from these definitions.
 
 from datetime import timedelta
 
-from feast import Entity, FeatureView, Field, FileSource
+from feast import Entity, FeatureView, Field, FileSource, ValueType
 from feast.types import Float64, Int64
 
 # ── Entity ───────────────────────────────────────────────────────────────────
@@ -15,6 +15,7 @@ from feast.types import Float64, Int64
 vehicle = Entity(
     name="vehicle",
     join_keys=["vehicle_id"],
+    value_type=ValueType.INT64,
     description="A vehicle listed on the platform",
 )
 

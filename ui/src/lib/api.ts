@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export interface VehicleFeatures {
   technology: number;
@@ -56,6 +56,37 @@ export async function fetchHealth(): Promise<HealthResponse> {
   return res.json();
 }
 
+export interface StoreInfo {
+  offline_store: {
+    available: boolean;
+    type: string;
+    path?: string;
+    size_bytes?: number;
+    last_modified?: number;
+  };
+  online_store: {
+    available: boolean;
+    type: string;
+    used_memory_human?: string;
+    keys?: number;
+    redis_url?: string;
+  };
+  feature_view: {
+    name: string;
+    entity: string;
+    entity_key: string;
+    features: string[];
+    label: string;
+    ttl_days: number;
+  };
+}
+
+export async function fetchStoreInfo(): Promise<StoreInfo> {
+  const res = await fetch(`${API_URL}/stores`);
+  if (!res.ok) throw new Error(`Failed to fetch store info: ${res.statusText}`);
+  return res.json();
+}
+
 export async function benchmark(
   vehicle: VehicleFeatures,
   nIterations: number
@@ -93,6 +124,7 @@ export async function reloadModel(): Promise<ReloadResponse> {
 export interface SaveVehicleResponse {
   vehicle_id: number;
   status: string;
+  event_published: boolean;
 }
 
 export interface VehicleRecord {
@@ -103,6 +135,8 @@ export interface VehicleRecord {
   num_images: number;
   street_parked: number;
   description: number;
+  source: string;
+  num_reservations: number | null;
 }
 
 export async function saveVehicle(vehicle: VehicleFeatures): Promise<SaveVehicleResponse> {
@@ -121,13 +155,24 @@ export async function listVehicles(): Promise<VehicleRecord[]> {
   return res.json();
 }
 
+export async function deleteVehicle(vehicleId: number): Promise<void> {
+  const res = await fetch(`${API_URL}/vehicles/${vehicleId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Failed to delete vehicle: ${res.statusText}`);
+}
+
 export async function predictById(vehicleId: number): Promise<PredictionResponse> {
   const res = await fetch(`${API_URL}/predict/id`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ vehicle_id: vehicleId }),
   });
-  if (!res.ok) throw new Error(`Prediction failed: ${res.statusText}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const detail = body?.detail ?? res.statusText;
+    throw new Error(`[${res.status}] ${detail}`);
+  }
   return res.json();
 }
 
@@ -142,10 +187,17 @@ export interface ComputedFeatures {
   price_diff: number | null;
   price_ratio: number | null;
   materialized: boolean;
+  store: "offline" | "online" | "none";
 }
 
 export async function fetchVehicleFeatures(vehicleId: number): Promise<ComputedFeatures> {
   const res = await fetch(`${API_URL}/vehicles/${vehicleId}/features`);
+  if (!res.ok) throw new Error(`Failed to fetch features: ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchAllVehicleFeatures(): Promise<ComputedFeatures[]> {
+  const res = await fetch(`${API_URL}/vehicles/features`);
   if (!res.ok) throw new Error(`Failed to fetch features: ${res.statusText}`);
   return res.json();
 }

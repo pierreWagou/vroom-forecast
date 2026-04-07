@@ -266,7 +266,6 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "feast", extra = ["redis"] },
-    { name = "numpy" },
     { name = "pandas" },
 ]
 
@@ -278,7 +277,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "feast", extras = ["redis"], specifier = ">=0.61" },
-    { name = "numpy", specifier = ">=2.2" },
     { name = "pandas", specifier = ">=2.2" },
 ]
 

@@ -4,9 +4,9 @@ Vroom Forecast — Training DAG
 Trains a Random Forest model using features from the offline store, registers
 it in MLflow with the "candidate" alias, then triggers the promotion DAG.
 
-Assumes features have already been materialized by the materialize DAG.
-
-Runs weekly on Sundays at 02:00 UTC. Can also be triggered manually.
+Uses Airflow Datasets for cross-DAG dependency: this DAG is triggered
+whenever the materialize DAG produces fresh features (typically daily).
+Can also be triggered manually.
 """
 
 from __future__ import annotations
@@ -15,17 +15,20 @@ import pendulum
 from airflow.operators.bash import BashOperator
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
-from airflow import DAG
+from airflow import DAG, Dataset
 
 MLFLOW_URI = "http://mlflow:5000"
 FEATURE_STORE = "/feast-data/vehicle_features.parquet"
 PROJECT_DIR = "/opt/airflow"
 
+# Cross-DAG dependency: only train when features have been refreshed
+FEATURES_DATASET = Dataset("file:///feast-data/vehicle_features.parquet")
+
 with DAG(
     dag_id="vroom_forecast_training",
     description="Train the vroom-forecast model and tag it as candidate",
     start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
-    schedule="0 2 * * 0",  # Every Sunday at 02:00 UTC
+    schedule=[FEATURES_DATASET],
     catchup=False,
     tags=["ml", "vroom-forecast", "training"],
     default_args={
@@ -44,6 +47,7 @@ with DAG(
         ),
         # Last line of stdout (the model version) is pushed to XCom
         do_xcom_push=True,
+        execution_timeout=pendulum.duration(minutes=30),
     )
 
     trigger_promotion = TriggerDagRunOperator(

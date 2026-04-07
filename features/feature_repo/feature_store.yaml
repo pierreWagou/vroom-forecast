@@ -1,9 +1,12 @@
 project: vroom_forecast
 provider: local
-registry: /feast-data/registry.db
+# These paths use env vars for portability between Docker and local dev.
+# Docker: defaults are set via docker-compose.yml environment.
+# Local:  export FEAST_REGISTRY=./feast-data/registry.db FEAST_REDIS=localhost:6379
+registry: ${FEAST_REGISTRY}
 online_store:
   type: redis
-  connection_string: redis:6379
+  connection_string: ${FEAST_REDIS}
 offline_store:
   type: file
 entity_key_serialization_version: 3

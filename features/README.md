@@ -10,7 +10,7 @@ graph LR
     CSV[vehicles.csv<br/>reservations.csv] -->|seed.py| DB[(SQLite)]
     UI[Serving API] -->|save vehicle| DB
     DB -->|pipeline.py| PQ[Parquet<br/>offline store]
-    DB -->|pipeline.py| RD[(Redis<br/>online store)]
+    DB -->|pipeline.py<br/>new arrivals only| RD[(Redis<br/>online store)]
     PQ --> Training
     RD --> Serving
 ```
@@ -31,8 +31,7 @@ docker compose exec airflow airflow dags trigger vroom_forecast_materialize
 ## Key files
 
 - `seed.py` — Loads CSVs into SQLite (idempotent, one-time)
-- `pipeline.py` — Reads SQLite, computes features, writes Parquet + materializes to Redis
-- `worker.py` — Real-time materialization worker (Redis pub/sub)
+- `pipeline.py` — Reads SQLite, computes features, writes Parquet, materializes new arrivals to Redis
 - `feature_repo/feature_store.yaml` — Feast config (file offline + Redis online)
 - `feature_repo/definitions.py` — Entity, FeatureView, schema, feature refs
 
@@ -48,7 +47,7 @@ docker compose exec airflow airflow dags trigger vroom_forecast_materialize
 | description | Int64 | Raw |
 | price_diff | Float64 | Derived (actual - recommended) |
 | price_ratio | Float64 | Derived (actual / recommended) |
-| num_reservations | Int64 | Aggregated (label, not a feature) |
+| num_reservations | Int64 (nullable) | Aggregated (label, not a feature — NULL for new arrivals) |
 
 ## Database Schema
 
