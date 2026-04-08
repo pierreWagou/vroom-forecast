@@ -1,14 +1,28 @@
 ---
 name: local-dev
-description: Local development — Docker services, mprocs, pipeline triggers, ports, and dev tools setup
+description: Local development — mise tasks, Docker services, mprocs, pipeline triggers, ports, and dev tools setup
 ---
+
+## mise — Task Runner & Tool Manager
+
+All dev tools and tasks are defined in `mise.toml`. Run `mise tasks ls` to list them.
+
+```bash
+mise install          # Install pinned tools (Python 3.12, Node LTS, uv, mprocs)
+mise run setup        # Bootstrap all deps + pre-commit hooks
+mise run dev          # Start everything (mprocs)
+mise run test         # Run all pytest suites
+mise run lint         # Run all linters + type checkers
+mise run check        # Lint + test (CI equivalent)
+mise run pipeline     # Full ML pipeline: seed → train → promote
+```
 
 ## Local Development
 
 Start all services:
 ```bash
-mprocs                  # MLflow, Redis, Airflow, Serving, UI, Jupyter, Docs
-docker compose up       # Just Docker services (no UI, Jupyter, or Docs)
+mise run dev            # Recommended: uses mprocs
+docker compose up       # Alternative: just Docker services (no UI, Jupyter, or Docs)
 ```
 
 ## Running Pipelines Locally

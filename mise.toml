@@ -1,0 +1,109 @@
+# https://mise.jdx.dev/configuration.html
+min_version = "2024.9.0"
+
+# ── Tool versions ──
+# `mise install` or auto-installed on `cd` into the project
+[tools]
+python = "3.12"
+node = "lts"
+uv = "latest"
+mprocs = "latest"
+
+# ── Environment ──
+[env]
+# Feast env vars for local dev (feature_store.yaml uses these)
+FEAST_REGISTRY = "{{config_root}}/feast-data/registry.db"
+FEAST_REDIS = "localhost:6379"
+# Pin uv to use mise-managed Python (prevents uv from picking up its own 3.14)
+UV_PYTHON = "3.12"
+
+# ── Tasks ──
+
+[tasks.setup]
+description = "Bootstrap the project (all sub-project deps + pre-commit hooks)"
+run = """
+# Check Docker is available
+if ! command -v docker &> /dev/null; then
+  echo "ERROR: Docker is required but not installed."
+  echo "       Install Docker Desktop: https://docs.docker.com/get-docker/"
+  exit 1
+fi
+if ! docker info &> /dev/null; then
+  echo "ERROR: Docker daemon is not running. Start Docker Desktop first."
+  exit 1
+fi
+
+echo "Installing Python sub-project dependencies..."
+for dir in training promotion serving features exploration; do
+  echo "  → $dir/"
+  uv sync --project "$dir" --quiet
+done
+
+echo "Installing UI dependencies..."
+cd ui && npm install --silent
+
+echo "Installing pre-commit hooks..."
+uvx pre-commit install
+
+echo ""
+echo "Done! Run 'mise run dev' to start all services."
+"""
+
+[tasks.dev]
+description = "Start all services (Docker + UI + Jupyter + Docs)"
+run = "mprocs"
+
+[tasks.test]
+description = "Run all tests across sub-projects"
+run = """
+failed=0
+for dir in training promotion serving features; do
+  echo "── pytest ($dir) ──"
+  (cd "$dir" && uv run --group dev pytest tests/ -q) || failed=1
+  echo ""
+done
+exit $failed
+"""
+
+[tasks.lint]
+description = "Run all linters and type checkers"
+run = "uvx pre-commit run --all-files"
+
+[tasks.check]
+description = "Lint + test (full CI-equivalent check)"
+depends = ["lint", "test"]
+
+[tasks.seed]
+description = "Seed the database and materialize features (requires Docker services)"
+run = """
+echo "Seeding database..."
+cd features && uv run python seed.py \
+    --data-dir ../data \
+    --db ../feast-data/vehicles.db
+
+echo "Materializing features..."
+cd features && uv run python pipeline.py \
+    --db ../feast-data/vehicles.db \
+    --feast-repo feature_repo \
+    --parquet-path ../feast-data/vehicle_features.parquet
+"""
+
+[tasks.train]
+description = "Train a model (requires materialized features + MLflow)"
+run = """
+uv run --project training python -m training \
+    --feature-store feast-data/vehicle_features.parquet \
+    --mlflow-uri http://localhost:5001
+"""
+
+[tasks.promote]
+description = "Run champion/challenger promotion (requires trained model + Redis)"
+run = """
+uv run --project promotion python -m promotion \
+    --mlflow-uri http://localhost:5001 \
+    --redis-url redis://localhost:6379
+"""
+
+[tasks.pipeline]
+description = "Run full ML pipeline: seed → train → promote"
+depends = ["seed", "train", "promote"]

@@ -4,6 +4,32 @@ ML pipeline that predicts the number of reservations a vehicle will receive
 based on its listing attributes. Built as a take-home project for a
 **Staff MLOps Engineer** position at Turo.
 
+## Getting Started
+
+### Prerequisites
+
+- [mise](https://mise.jdx.dev/getting-started.html) — installs and manages all dev tools automatically
+- [Docker Desktop](https://docs.docker.com/get-docker/) — runs MLflow, Redis, Airflow, and Ray Serve
+
+### Setup
+
+```bash
+git clone https://github.com/pierreWagou/vroom-forecast.git
+cd vroom-forecast
+
+# 1. Install tools (Python 3.12, Node LTS, uv, mprocs)
+mise install
+
+# 2. Bootstrap all dependencies
+mise run setup
+
+# 3. Start everything
+mise run dev
+```
+
+The UI is at [localhost:3000](http://localhost:3000). Trigger the ML pipeline
+from Airflow at [localhost:8080](http://localhost:8080) (credentials: `admin` / `admin`).
+
 ## Architecture
 
 ```mermaid
@@ -55,27 +81,19 @@ graph TB
 
 > **Zoom in:** [Feature Store](features/) · [Serving](serving/) · [Training](training/) · [Promotion](promotion/) · [Orchestration](airflow/) · [Frontend](ui/) · [Exploration](exploration/)
 
-## Quick Start
+## Available Tasks
 
-```bash
-# 1. Start infrastructure (MLflow, Redis, Airflow, Serving)
-docker compose up -d
-
-# 2. Start the UI
-cd ui && npm install && npm run dev
-
-# 3. Seed the database and materialize features
-docker compose exec airflow airflow dags trigger vroom_forecast_materialize
-
-# 4. Train a model (auto-triggers after materialize via Airflow Dataset)
-#    Or trigger manually:
-docker compose exec airflow airflow dags trigger vroom_forecast_training
-
-# 5. Open the UI
-open http://localhost:3000
-```
-
-> **Airflow UI:** http://localhost:8080 — credentials: `admin` / `admin`
+| Command | Description |
+|---|---|
+| `mise run setup` | Bootstrap all sub-project deps + pre-commit hooks |
+| `mise run dev` | Start all services (mprocs: Docker, UI, Jupyter, Docs) |
+| `mise run test` | Run all tests across sub-projects |
+| `mise run lint` | Run all linters and type checkers |
+| `mise run check` | Lint + test (full CI-equivalent) |
+| `mise run seed` | Seed DB + materialize features (local, no Airflow) |
+| `mise run train` | Train a model locally |
+| `mise run promote` | Run champion/challenger promotion locally |
+| `mise run pipeline` | Full ML pipeline: seed → train → promote |
 
 ## Services
 
