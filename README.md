@@ -1,7 +1,7 @@
 # Vroom Forecast
 
 [![CI](https://github.com/pierreWagou/vroom-forecast/actions/workflows/ci.yml/badge.svg)](https://github.com/pierreWagou/vroom-forecast/actions/workflows/ci.yml)
-[![Docs](https://github.com/pierreWagou/vroom-forecast/actions/workflows/cd-docs.yml/badge.svg)](https://github.com/pierreWagou/vroom-forecast/actions/workflows/cd-docs.yml)
+[![CD](https://github.com/pierreWagou/vroom-forecast/actions/workflows/cd-docs.yml/badge.svg)](https://github.com/pierreWagou/vroom-forecast/actions/workflows/cd-docs.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
