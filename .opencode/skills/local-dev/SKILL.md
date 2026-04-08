@@ -1,6 +1,6 @@
 ---
-name: run-pipeline
-description: How to run services locally — all pipelines, Docker services, and dev tools
+name: local-dev
+description: Local development — Docker services, mprocs, pipeline triggers, ports, and dev tools setup
 ---
 
 ## Local Development

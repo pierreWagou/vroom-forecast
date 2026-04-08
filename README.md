@@ -275,3 +275,31 @@ meaning more consistent response times — fewer outlier predictions.
 | Multiple Predictor replicas | Linear throughput scaling |
 | GPU-based model (XGBoost, neural net) | Leverage Ray Serve's GPU-aware scheduling |
 | More complex features (aggregations, embeddings) | Online store path becomes significantly faster than on-the-fly |
+
+## Agent-Enabled Repository
+
+This repo ships with built-in AI agent support. When you clone it, the
+following files give any compatible coding agent (OpenCode, Cursor, Copilot
+Workspace, etc.) full project context out of the box:
+
+| File / Directory | Purpose |
+|---|---|
+| `AGENTS.md` | Always-on context — Turo role, tech stack, design principles, task specification |
+| `.opencode/skills/` | On-demand skills loaded when a task matches their domain |
+
+Available skills:
+
+| Skill | Description |
+|---|---|
+| **training** | ML training pipeline — scikit-learn, MLflow tracking, offline store |
+| **promotion** | Champion/challenger promotion — MLflow aliases, Redis pub/sub |
+| **serving** | Ray Serve prediction API — FastAPI, Feast, deployment composition |
+| **features** | Feast feature store — offline/online stores, materialization pipeline |
+| **airflow** | Pipeline orchestration — DAG definitions, BashOperator + uv isolation |
+| **ui** | Next.js + shadcn/ui frontend — Turo design, SSE streams |
+| **exploration** | EDA notebook — Jupytext, data analysis |
+| **local-dev** | Local development — Docker services, mprocs, pipeline triggers, ports |
+| **docs** | MkDocs Material documentation site — structure, conventions |
+
+No extra setup is needed — just open the repo with an agent-enabled editor and
+the context is picked up automatically.
