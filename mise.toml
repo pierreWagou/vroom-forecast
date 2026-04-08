@@ -53,25 +53,9 @@ echo "Done! Run 'mise run dev' to start all services."
 description = "Start all services (Docker + UI + Jupyter + Docs)"
 run = "mprocs"
 
-[tasks.test]
-description = "Run all tests across sub-projects"
-run = """
-failed=0
-for dir in training promotion serving features; do
-  echo "── pytest ($dir) ──"
-  (cd "$dir" && uv run --group dev pytest tests/ -q) || failed=1
-  echo ""
-done
-exit $failed
-"""
-
-[tasks.lint]
-description = "Run all linters and type checkers"
-run = "uvx pre-commit run --all-files"
-
 [tasks.check]
-description = "Lint + test (full CI-equivalent check)"
-depends = ["lint", "test"]
+description = "Run all linters, type checkers, and tests (full CI-equivalent check)"
+run = "uvx pre-commit run --all-files"
 
 [tasks.seed]
 description = "Seed the database and materialize features (requires Docker services)"
@@ -82,7 +66,7 @@ cd features && uv run python seed.py \
     --db ../feast-data/vehicles.db
 
 echo "Materializing features..."
-cd features && uv run python pipeline.py \
+uv run python pipeline.py \
     --db ../feast-data/vehicles.db \
     --feast-repo feature_repo \
     --parquet-path ../feast-data/vehicle_features.parquet

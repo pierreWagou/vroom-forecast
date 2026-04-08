@@ -63,13 +63,25 @@ import {
   type StoreInfo,
 } from "@/lib/api";
 
+function randomVehicle(): VehicleFeatures {
+  return {
+    technology: Math.random() < 0.17 ? 1 : 0,
+    actual_price: Math.round(33 + Math.random() * 141), // 33–174
+    recommended_price: Math.round(35 + Math.random() * 55), // 35–90
+    num_images: Math.floor(1 + Math.random() * 5), // 1–5
+    street_parked: Math.random() < 0.5 ? 1 : 0,
+    description: Math.round(1 + Math.random() * 249), // 1–250
+  };
+}
+
+// Static default for SSR — randomized on mount to avoid hydration mismatch
 const DEFAULT_VEHICLE: VehicleFeatures = {
-  technology: 1,
-  actual_price: 45,
-  recommended_price: 50,
-  num_images: 8,
+  technology: 0,
+  actual_price: 75,
+  recommended_price: 60,
+  num_images: 3,
   street_parked: 0,
-  description: 250,
+  description: 120,
 };
 
 function StatusDot({ online }: { online: boolean }) {
@@ -113,6 +125,7 @@ export default function Home() {
 
   useEffect(() => {
     setMounted(true);
+    setVehicle(randomVehicle());
     fetchHealth().then(setHealth).catch(() => setHealth(null));
     fetchStoreInfo().then(setStoreInfo).catch(() => {});
   }, []);
@@ -324,28 +337,42 @@ export default function Home() {
   }, [mounted, refreshVehicles]);
 
   // SSE: persistent connection for vehicle-materialized events.
-  // Stays open as long as the component is mounted — doesn't reconnect on
-  // state changes, so we never miss events due to race conditions.
+  // Reconnects on error with a 5s delay, mirroring the /events SSE pattern.
   useEffect(() => {
     if (!mounted) return;
 
-    const es = new EventSource(`${API_URL}/vehicles/events`);
+    let es: EventSource | null = null;
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    es.onmessage = async (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "vehicle-materialized" && data.vehicle_id) {
-          const feat = await fetchVehicleFeatures(data.vehicle_id);
-          if (feat.materialized) {
-            setVehicleFeatures((prev) => ({ ...prev, [data.vehicle_id]: feat }));
+    const connect = () => {
+      es = new EventSource(`${API_URL}/vehicles/events`);
+
+      es.onmessage = async (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "vehicle-materialized" && data.vehicle_id) {
+            const feat = await fetchVehicleFeatures(data.vehicle_id);
+            if (feat.materialized) {
+              setVehicleFeatures((prev) => ({ ...prev, [data.vehicle_id]: feat }));
+            }
           }
+        } catch {
+          // Ignore parse errors (keepalive comments etc.)
         }
-      } catch {
-        // Ignore parse errors (keepalive comments etc.)
-      }
+      };
+
+      es.onerror = () => {
+        // Connection lost — close and retry in 5s
+        es?.close();
+        retryTimeout = setTimeout(connect, 5000);
+      };
     };
 
-    return () => es.close();
+    connect();
+    return () => {
+      es?.close();
+      if (retryTimeout) clearTimeout(retryTimeout);
+    };
   }, [mounted]);
 
   // Auto-pick first materialized vehicle for the online store benchmark
@@ -423,17 +450,15 @@ export default function Home() {
 
               <Tooltip>
                 <TooltipTrigger>
-                  <div
-                    role="button"
-                    tabIndex={0}
+                  <button
+                    type="button"
+                    aria-label="Reload champion model from MLflow"
                     onClick={reloading || !health ? undefined : handleReload}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !reloading && health) handleReload();
-                    }}
+                    disabled={reloading || !health}
                     className={`flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors ${reloading || !health ? "opacity-50 cursor-not-allowed" : "hover:bg-white/25 cursor-pointer"}`}
                   >
                     <RefreshCw className={`h-4 w-4 ${reloading ? "animate-spin" : ""}`} />
-                  </div>
+                  </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
                   Reload champion model from MLflow
@@ -446,6 +471,7 @@ export default function Home() {
                     href="http://localhost:8100"
                     target="_blank"
                     rel="noopener noreferrer"
+                    aria-label="Documentation (opens in new tab)"
                     className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors hover:bg-white/25"
                   >
                     <BookOpen className="h-4 w-4" />
@@ -458,13 +484,10 @@ export default function Home() {
 
               <Tooltip>
                 <TooltipTrigger>
-                  <div
-                    role="button"
-                    tabIndex={0}
+                  <button
+                    type="button"
+                    aria-label={mounted && resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
                     onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") setTheme(resolvedTheme === "dark" ? "light" : "dark");
-                    }}
                     className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors hover:bg-white/25 cursor-pointer"
                   >
                     {mounted && resolvedTheme === "dark" ? (
@@ -472,7 +495,7 @@ export default function Home() {
                     ) : (
                       <Moon className="h-4 w-4" />
                     )}
-                  </div>
+                  </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
                   {mounted && resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
@@ -486,7 +509,7 @@ export default function Home() {
       {/* ── Content area ── */}
       <div className="mx-auto max-w-5xl px-6 -mt-6">
         {error && (
-          <div className="mb-4 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
+          <div role="alert" className="mb-4 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
             {error}
           </div>
         )}
@@ -667,7 +690,7 @@ export default function Home() {
                           Technology package
                         </Label>
                         <p className="text-xs text-muted-foreground">
-                          GPS, Bluetooth, etc.
+                          Instantly bookable &amp; mobile-unlockable
                         </p>
                       </div>
                       <Switch
@@ -716,17 +739,15 @@ export default function Home() {
                     </Button>
                     <Tooltip>
                       <TooltipTrigger>
-                        <div
-                          role="button"
-                          tabIndex={0}
+                        <button
+                          type="button"
+                          aria-label="Save vehicle to catalog"
                           onClick={saving || !health ? undefined : handleSaveVehicle}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && !saving && health) handleSaveVehicle();
-                          }}
+                          disabled={saving || !health}
                           className={`flex h-11 w-11 items-center justify-center rounded-full border ${saving || !health ? "opacity-50 cursor-not-allowed" : "hover:bg-muted cursor-pointer"}`}
                         >
                           <Save className={`h-5 w-5 ${saving ? "animate-pulse" : ""}`} />
-                        </div>
+                        </button>
                       </TooltipTrigger>
                       <TooltipContent>Save to catalog</TooltipContent>
                     </Tooltip>
@@ -867,7 +888,7 @@ export default function Home() {
                           else if (n > 100000) setBenchIterations("100000");
                           else setBenchIterations(String(Math.round(n)));
                         }}
-                        disabled={benchLoading && benchStoreLoading}
+                        disabled={benchLoading || benchStoreLoading}
                       />
                     </div>
                     <Button
@@ -1209,6 +1230,7 @@ export default function Home() {
                                     )}
                                     <button
                                       type="button"
+                                      aria-label={`Remove vehicle ${v.vehicle_id}`}
                                       title="Remove vehicle"
                                       className="h-8 w-8 p-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-accent transition-colors cursor-pointer"
                                       onClick={() => handleDeleteVehicle(v.vehicle_id)}
@@ -1602,6 +1624,22 @@ export default function Home() {
               className="hover:text-primary transition-colors"
             >
               Airflow
+            </a>
+            <a
+              href="http://localhost:8888"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-primary transition-colors"
+            >
+              Jupyter
+            </a>
+            <a
+              href="http://localhost:8265"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-primary transition-colors"
+            >
+              Ray Dashboard
             </a>
           </div>
         </div>

@@ -40,7 +40,7 @@ The materialize DAG runs two steps that populate the feature stores:
 graph LR
     CSV[vehicles.csv<br/>reservations.csv] -->|seed.py| DB[(SQLite)]
     UI[Serving API] -->|save vehicle| DB
-    DB -->|pipeline.py| COMPUTE[Compute Features<br/><i>price_diff, price_ratio<br/>num_reservations</i>]
+    DB -->|pipeline.py| COMPUTE[Compute Features<br/><i>price_diff<br/>num_reservations</i>]
     COMPUTE --> PQ[Parquet<br/>offline store<br/><i>fleet vehicles only</i>]
     COMPUTE --> RD[(Redis<br/>online store<br/><i>new arrivals only</i>)]
 ```
@@ -74,7 +74,6 @@ cd features && uv run python pipeline.py \
 | Feature | Formula |
 |---------|---------|
 | `price_diff` | `actual_price - recommended_price` |
-| `price_ratio` | `actual_price / recommended_price` |
 | `num_reservations` | `COUNT(reservations)` per vehicle — `NULL` for ui-sourced vehicles, `0` for csv vehicles with no bookings |
 
 ### Running
@@ -110,7 +109,8 @@ uv creates an isolated venv inside the container on first run.
 
 ## Credentials
 
-`airflow standalone` generates an admin password on first start:
+The admin user is created explicitly in `docker-compose.yml` with credentials
+`admin` / `admin`. The password is also written to:
 
 ```bash
 docker compose exec airflow cat /opt/airflow/standalone_admin_password.txt

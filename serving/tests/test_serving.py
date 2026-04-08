@@ -4,6 +4,8 @@ Note: Full endpoint integration tests require a running Ray Serve cluster.
 These tests focus on unit-testable components: schemas, feature engineering.
 """
 
+import os
+
 import pandas as pd
 import pytest
 from pydantic import ValidationError
@@ -279,3 +281,156 @@ class TestOfflineFeatureReader:
         loaded = pd.read_parquet(path).set_index("vehicle_id")
         mask = loaded.index.isin([1])
         assert not mask.any()
+
+
+# ── Vehicles CRUD ────────────────────────────────────────────────────────────
+
+
+class TestVehicles:
+    """Test vehicle persistence (SQLite CRUD) without Redis."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_settings(self, tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Point DB_PATH to a temporary database and disable Redis."""
+        db = os.path.join(str(tmp_path), "test_vehicles.db")
+        monkeypatch.setattr("serving.vehicles.DB_PATH", db)
+        monkeypatch.setattr("serving.config.settings.redis_url", None)
+
+    def test_save_and_list(self) -> None:
+        from serving.vehicles import list_vehicles, save_vehicle
+
+        v = VehicleFeatures(
+            technology=1,
+            actual_price=45.0,
+            recommended_price=50.0,
+            num_images=8,
+            street_parked=0,
+            description=250,
+        )
+        vid, published = save_vehicle(v)
+        assert vid > 0
+        assert published is False  # no Redis
+
+        vehicles = list_vehicles()
+        assert len(vehicles) == 1
+        assert vehicles[0].vehicle_id == vid
+        assert vehicles[0].source == "ui"
+        assert vehicles[0].technology == 1
+        assert vehicles[0].num_reservations is None  # UI vehicle → no observation
+
+    def test_delete_ui_vehicle(self) -> None:
+        from serving.vehicles import delete_vehicle, list_vehicles, save_vehicle
+
+        v = VehicleFeatures(
+            technology=0,
+            actual_price=30.0,
+            recommended_price=25.0,
+            num_images=2,
+            street_parked=1,
+            description=50,
+        )
+        vid, _ = save_vehicle(v)
+        assert delete_vehicle(vid) is True
+        assert list_vehicles() == []
+
+    def test_delete_nonexistent_returns_false(self) -> None:
+        from serving.vehicles import delete_vehicle
+
+        assert delete_vehicle(99999) is False
+
+    def test_delete_csv_vehicle_blocked(self, tmp_path: object) -> None:
+        """CSV-sourced vehicles cannot be deleted via delete_vehicle."""
+        from serving.vehicles import _get_db, delete_vehicle
+
+        conn = _get_db()
+        conn.execute(
+            "INSERT INTO vehicles (technology, actual_price, recommended_price, "
+            "num_images, street_parked, description, source) "
+            "VALUES (1, 45, 50, 8, 0, 250, 'csv')"
+        )
+        conn.commit()
+        vid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.close()
+
+        assert delete_vehicle(vid) is False
+
+    def test_list_with_reservations_table(self, tmp_path: object) -> None:
+        """list_vehicles handles the JOIN when reservations table exists."""
+        from serving.vehicles import _get_db, list_vehicles
+
+        # Insert a CSV vehicle with reservations
+        conn = _get_db()
+        conn.execute(
+            "INSERT INTO vehicles (technology, actual_price, recommended_price, "
+            "num_images, street_parked, description, source) "
+            "VALUES (1, 45, 50, 8, 0, 250, 'csv')"
+        )
+        vid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS reservations "
+            "(id INTEGER PRIMARY KEY, vehicle_id INTEGER, created_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO reservations (vehicle_id, created_at) VALUES (?, '2025-01-01')",
+            (vid,),
+        )
+        conn.execute(
+            "INSERT INTO reservations (vehicle_id, created_at) VALUES (?, '2025-01-02')",
+            (vid,),
+        )
+        conn.commit()
+        conn.close()
+
+        vehicles = list_vehicles()
+        assert len(vehicles) == 1
+        assert vehicles[0].num_reservations == 2
+        assert vehicles[0].source == "csv"
+
+    def test_multiple_vehicles_ordered(self) -> None:
+        from serving.vehicles import list_vehicles, save_vehicle
+
+        for price in [10, 20, 30]:
+            save_vehicle(
+                VehicleFeatures(
+                    technology=0,
+                    actual_price=float(price),
+                    recommended_price=25.0,
+                    num_images=1,
+                    street_parked=0,
+                    description=10,
+                )
+            )
+
+        vehicles = list_vehicles()
+        assert len(vehicles) == 3
+        # Ordered by vehicle_id (ascending)
+        assert vehicles[0].vehicle_id < vehicles[1].vehicle_id < vehicles[2].vehicle_id
+
+
+# ── Config ───────────────────────────────────────────────────────────────────
+
+
+class TestConfig:
+    def test_default_values(self) -> None:
+        from serving.config import Settings
+
+        s = Settings()
+        assert s.mlflow_uri == "http://localhost:5001"
+        assert s.model_name == "vroom-forecast"
+        assert s.host == "0.0.0.0"
+        assert s.port == 8000
+        assert s.feast_repo is None
+        assert s.redis_url is None
+        assert s.db_path == "/feast-data/vehicles.db"
+        assert s.offline_store_path is None
+
+    def test_env_prefix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from serving.config import Settings
+
+        monkeypatch.setenv("SERVING_MLFLOW_URI", "http://custom:9000")
+        monkeypatch.setenv("SERVING_PORT", "9090")
+        monkeypatch.setenv("SERVING_REDIS_URL", "redis://myredis:6379")
+        s = Settings()
+        assert s.mlflow_uri == "http://custom:9000"
+        assert s.port == 9090
+        assert s.redis_url == "redis://myredis:6379"

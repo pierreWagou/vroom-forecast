@@ -29,10 +29,12 @@ vehicle reservation counts from listing attributes.
 
 ## Feature Columns
 
-`technology`, `actual_price`, `recommended_price`, `num_images`, `street_parked`,
-`description`, `price_diff`, `price_ratio`
+`technology`, `num_images`, `street_parked`, `description`, `price_diff`
 
 Target: `num_reservations`
+
+> Raw prices are vehicle attributes used to compute `price_diff` but are NOT
+> model inputs. `price_ratio` was dropped (91% correlated with `price_diff`).
 
 ## File Layout
 

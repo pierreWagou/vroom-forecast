@@ -28,7 +28,7 @@ feature lookup, model inference, and feature materialization.
 |---|---|
 | `VroomForecastApp` | FastAPI ingress — routes, SSE, vehicle CRUD |
 | `Predictor` | Loads champion model from MLflow, runs inference |
-| `FeatureComputer` | On-the-fly feature computation (price_diff, price_ratio) |
+| `FeatureComputer` | On-the-fly feature computation (price_diff) |
 | `FeatureLookup` | Feast/Redis online store lookup |
 | `OfflineFeatureReader` | Reads all features from Parquet offline store |
 | `FeatureMaterializer` | Ray actor — writes features to Redis + Parquet on vehicle save |
@@ -52,6 +52,7 @@ feature lookup, model inference, and feature materialization.
 | `GET` | `/vehicles/{id}/features` | Features for one vehicle |
 | `GET` | `/stores` | Offline/online store operational info |
 | `GET` | `/events` | SSE stream for model promotion events |
+| `GET` | `/vehicles/events` | SSE stream for vehicle materialization events |
 
 ## Configuration
 
@@ -59,14 +60,14 @@ Env vars with `SERVING_` prefix (pydantic-settings):
 
 | Var | Default | Description |
 |---|---|---|
-| `SERVING_MLFLOW_URI` | `http://mlflow:5000` | MLflow tracking URI |
+| `SERVING_MLFLOW_URI` | `http://localhost:5001` | MLflow tracking URI |
 | `SERVING_MODEL_NAME` | `vroom-forecast` | Registered model name |
 | `SERVING_HOST` | `0.0.0.0` | Bind host |
 | `SERVING_PORT` | `8000` | Bind port |
-| `SERVING_FEAST_REPO` | `feature_repo` | Path to Feast repo |
-| `SERVING_REDIS_URL` | `redis://redis:6379` | Redis connection URL |
-| `SERVING_DB_PATH` | `/data/vehicles.db` | SQLite database path |
-| `SERVING_OFFLINE_STORE_PATH` | `/data/vehicle_features.parquet` | Parquet offline store |
+| `SERVING_FEAST_REPO` | None | Path to Feast repo |
+| `SERVING_REDIS_URL` | None | Redis connection URL |
+| `SERVING_DB_PATH` | `/feast-data/vehicles.db` | SQLite database path |
+| `SERVING_OFFLINE_STORE_PATH` | None | Parquet offline store |
 
 ## File Layout
 

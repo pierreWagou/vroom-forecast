@@ -9,9 +9,7 @@ Tool versions and tasks are managed by [mise](https://mise.jdx.dev/) via `mise.t
 - **Tools:** Python 3.12, Node LTS, uv, mprocs (auto-installed with `mise install`)
 - **Bootstrap:** `mise run setup` (syncs all sub-project deps + pre-commit hooks)
 - **Run all services:** `mise run dev` (mprocs: Docker, UI, Jupyter, Docs)
-- **Tests:** `mise run test` — runs pytest across all Python sub-projects
-- **Lint:** `mise run lint` — runs pre-commit (ruff, ty, eslint, tsc, pytest)
-- **Full CI check:** `mise run check` (lint + test)
+- **Full CI check:** `mise run check` — runs pre-commit (ruff, ty, eslint, tsc, pytest)
 - **Local ML pipeline:** `mise run pipeline` (seed → train → promote, no Airflow)
 
 Each Python sub-project has its own `.venv`, `uv.lock`, `pyproject.toml`.

@@ -11,9 +11,7 @@ All dev tools and tasks are defined in `mise.toml`. Run `mise tasks ls` to list 
 mise install          # Install pinned tools (Python 3.12, Node LTS, uv, mprocs)
 mise run setup        # Bootstrap all deps + pre-commit hooks
 mise run dev          # Start everything (mprocs)
-mise run test         # Run all pytest suites
-mise run lint         # Run all linters + type checkers
-mise run check        # Lint + test (CI equivalent)
+mise run check        # Full CI check: lint + type check + tests (pre-commit)
 mise run pipeline     # Full ML pipeline: seed → train → promote
 ```
 
