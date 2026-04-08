@@ -96,6 +96,7 @@ export default function Home() {
   const [benchProgress, setBenchProgress] = useState(0);
   const [benchStoreProgress, setBenchStoreProgress] = useState(0);
   const [benchIterations, setBenchIterations] = useState("1000");
+  const [activeTab, setActiveTab] = useState("predict");
   const [error, setError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [reloading, setReloading] = useState(false);
@@ -240,16 +241,11 @@ export default function Home() {
     setError(null);
     try {
       const result = await saveVehicle(vehicle);
-      const vehicles = await listVehicles();
-      setSavedVehicles(vehicles);
-      // Mark as pending — the polling effect will update when materialized
-      setVehicleFeatures((prev) => ({
-        ...prev,
-        [result.vehicle_id]: { vehicle_id: result.vehicle_id, materialized: false } as ComputedFeatures,
-      }));
+      await refreshVehicles();
+      setActiveTab("vehicles");
       if (!result.event_published) {
         setError(
-          `Vehicle #${result.vehicle_id} saved, but feature materialization could not be triggered (Redis unavailable). Features must be materialized manually.`
+          `Vehicle #${result.vehicle_id} saved, but feature materialization could not be triggered (Redis unavailable).`
         );
       }
     } catch (e) {
@@ -301,17 +297,7 @@ export default function Home() {
     setError(null);
     try {
       await deleteVehicle(vehicleId);
-      setSavedVehicles((prev) => prev.filter((v) => v.vehicle_id !== vehicleId));
-      setVehiclePredictions((prev) => {
-        const next = { ...prev };
-        delete next[vehicleId];
-        return next;
-      });
-      setVehicleFeatures((prev) => {
-        const next = { ...prev };
-        delete next[vehicleId];
-        return next;
-      });
+      await refreshVehicles();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");
     }
@@ -337,39 +323,30 @@ export default function Home() {
     if (mounted) refreshVehicles();
   }, [mounted, refreshVehicles]);
 
-  // Poll for pending vehicles until all are materialized (timeout after 60s)
+  // SSE: persistent connection for vehicle-materialized events.
+  // Stays open as long as the component is mounted — doesn't reconnect on
+  // state changes, so we never miss events due to race conditions.
   useEffect(() => {
-    // Only poll for pending new arrivals (fleet vehicles resolve from offline store instantly)
-    const pendingArrivals = savedVehicles.filter(
-      (v) => v.num_reservations === null && !vehicleFeatures[v.vehicle_id]?.materialized
-    );
-    if (pendingArrivals.length === 0) return;
+    if (!mounted) return;
 
-    let elapsed = 0;
-    const POLL_MS = 2000;
-    const TIMEOUT_MS = 60000;
+    const es = new EventSource(`${API_URL}/vehicles/events`);
 
-    const interval = setInterval(async () => {
-      elapsed += POLL_MS;
-      if (elapsed > TIMEOUT_MS) {
-        clearInterval(interval);
-        return;
-      }
-      for (const v of pendingArrivals) {
-        if (vehicleFeatures[v.vehicle_id]?.materialized) continue;
-        try {
-          const feat = await fetchVehicleFeatures(v.vehicle_id);
+    es.onmessage = async (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "vehicle-materialized" && data.vehicle_id) {
+          const feat = await fetchVehicleFeatures(data.vehicle_id);
           if (feat.materialized) {
-            setVehicleFeatures((prev) => ({ ...prev, [v.vehicle_id]: feat }));
+            setVehicleFeatures((prev) => ({ ...prev, [data.vehicle_id]: feat }));
           }
-        } catch {
-          // ignore
         }
+      } catch {
+        // Ignore parse errors (keepalive comments etc.)
       }
-    }, POLL_MS);
+    };
 
-    return () => clearInterval(interval);
-  }, [savedVehicles, vehicleFeatures]);
+    return () => es.close();
+  }, [mounted]);
 
   // Auto-pick first materialized vehicle for the online store benchmark
   useEffect(() => {
@@ -417,8 +394,8 @@ export default function Home() {
                 </h1>
               </div>
               <p className="max-w-md text-base text-white/75">
-                Simulate how many reservations a vehicle will get based on its
-                listing attributes. Powered by ML.
+                Forecast vehicle booking demand from listing attributes — pricing,
+                photos, description, and more.
               </p>
             </div>
 
@@ -514,7 +491,7 @@ export default function Home() {
           </div>
         )}
 
-        <Tabs defaultValue="predict">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="mb-6 rounded-full bg-card shadow-sm border">
             <TabsTrigger
               value="predict"
@@ -890,7 +867,7 @@ export default function Home() {
                           else if (n > 100000) setBenchIterations("100000");
                           else setBenchIterations(String(Math.round(n)));
                         }}
-                        disabled={benchLoading || benchStoreLoading}
+                        disabled={benchLoading && benchStoreLoading}
                       />
                     </div>
                     <Button
@@ -919,10 +896,26 @@ export default function Home() {
                     )}
                   </div>
                   {(benchLoading || benchStoreLoading) && (
-                    <Progress
-                      value={benchLoading ? benchProgress : benchStoreProgress}
-                      className="h-1.5 mt-4"
-                    />
+                    <div className="mt-4 space-y-2">
+                      {benchLoading && (
+                        <div className="flex items-center gap-3">
+                          <span className="text-[10px] text-muted-foreground w-16 shrink-0">Raw</span>
+                          <Progress
+                            value={benchProgress}
+                            className="h-1.5 flex-1 [&_[data-slot=progress-indicator]]:bg-primary"
+                          />
+                        </div>
+                      )}
+                      {benchStoreLoading && (
+                        <div className="flex items-center gap-3">
+                          <span className="text-[10px] text-turo-teal w-16 shrink-0">Online</span>
+                          <Progress
+                            value={benchStoreProgress}
+                            className="h-1.5 flex-1 [&_[data-slot=progress-indicator]]:bg-turo-teal"
+                          />
+                        </div>
+                      )}
+                    </div>
                   )}
                 </CardContent>
               </Card>
@@ -1178,7 +1171,7 @@ export default function Home() {
                                         </Badge>
                                       )}
                                       {feat?.materialized ? (
-                                        <Badge variant="outline" className="rounded-full text-xs text-turo-teal border-turo-teal/30">
+                                        <Badge variant="outline" className={`rounded-full text-xs ${feat.store === "online" ? "text-turo-teal border-turo-teal/30" : "text-primary border-primary/30"}`}>
                                           {feat.store === "online" ? "Online Store" : "Offline Store"}
                                         </Badge>
                                       ) : (
@@ -1214,19 +1207,14 @@ export default function Home() {
                                         Simulate
                                       </Button>
                                     )}
-                                    <Tooltip>
-                                      <TooltipTrigger>
-                                        <Button
-                                          size="sm"
-                                          variant="ghost"
-                                          className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                                          onClick={() => handleDeleteVehicle(v.vehicle_id)}
-                                        >
-                                          <Trash2 className="h-3.5 w-3.5" />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent>Remove vehicle</TooltipContent>
-                                    </Tooltip>
+                                    <button
+                                      type="button"
+                                      title="Remove vehicle"
+                                      className="h-8 w-8 p-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-accent transition-colors cursor-pointer"
+                                      onClick={() => handleDeleteVehicle(v.vehicle_id)}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
                                   </div>
                                 </div>
 
@@ -1243,19 +1231,7 @@ export default function Home() {
                                             : ""}
                                       </span>
                                     </p>
-                                    <div className="grid grid-cols-4 gap-3">
-                                      <div>
-                                        <p className="text-[10px] text-muted-foreground">price_diff</p>
-                                        <p className="text-sm font-mono font-semibold">
-                                          {feat.price_diff !== null ? (feat.price_diff >= 0 ? "+" : "") + feat.price_diff.toFixed(2) : "\u2014"}
-                                        </p>
-                                      </div>
-                                      <div>
-                                        <p className="text-[10px] text-muted-foreground">price_ratio</p>
-                                        <p className="text-sm font-mono font-semibold">
-                                          {feat.price_ratio !== null ? feat.price_ratio.toFixed(3) : "\u2014"}
-                                        </p>
-                                      </div>
+                                    <div className="grid grid-cols-5 gap-3">
                                       <div>
                                         <p className="text-[10px] text-muted-foreground">technology</p>
                                         <p className="text-sm font-mono font-semibold">
@@ -1266,6 +1242,24 @@ export default function Home() {
                                         <p className="text-[10px] text-muted-foreground">num_images</p>
                                         <p className="text-sm font-mono font-semibold">
                                           {feat.num_images ?? "\u2014"}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] text-muted-foreground">street_parked</p>
+                                        <p className="text-sm font-mono font-semibold">
+                                          {feat.street_parked ?? "\u2014"}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] text-muted-foreground">description</p>
+                                        <p className="text-sm font-mono font-semibold">
+                                          {feat.description ?? "\u2014"}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] text-muted-foreground">price_diff</p>
+                                        <p className="text-sm font-mono font-semibold">
+                                          {feat.price_diff !== null ? (feat.price_diff >= 0 ? "+" : "") + feat.price_diff.toFixed(2) : "\u2014"}
                                         </p>
                                       </div>
                                     </div>
@@ -1334,7 +1328,7 @@ export default function Home() {
                                           </Badge>
                                         )}
                                         {feat?.materialized ? (
-                                          <Badge variant="outline" className="rounded-full text-xs text-turo-teal border-turo-teal/30">
+                                          <Badge variant="outline" className={`rounded-full text-xs ${feat.store === "online" ? "text-turo-teal border-turo-teal/30" : "text-primary border-primary/30"}`}>
                                             {feat.store === "offline" ? "Offline Store" : "Online Store"}
                                           </Badge>
                                         ) : (
@@ -1374,19 +1368,7 @@ export default function Home() {
                                               : ""}
                                         </span>
                                       </p>
-                                      <div className="grid grid-cols-4 gap-3">
-                                        <div>
-                                          <p className="text-[10px] text-muted-foreground">price_diff</p>
-                                          <p className="text-sm font-mono font-semibold">
-                                            {feat.price_diff !== null ? (feat.price_diff >= 0 ? "+" : "") + feat.price_diff.toFixed(2) : "\u2014"}
-                                          </p>
-                                        </div>
-                                        <div>
-                                          <p className="text-[10px] text-muted-foreground">price_ratio</p>
-                                          <p className="text-sm font-mono font-semibold">
-                                            {feat.price_ratio !== null ? feat.price_ratio.toFixed(3) : "\u2014"}
-                                          </p>
-                                        </div>
+                                      <div className="grid grid-cols-5 gap-3">
                                         <div>
                                           <p className="text-[10px] text-muted-foreground">technology</p>
                                           <p className="text-sm font-mono font-semibold">
@@ -1397,6 +1379,24 @@ export default function Home() {
                                           <p className="text-[10px] text-muted-foreground">num_images</p>
                                           <p className="text-sm font-mono font-semibold">
                                             {feat.num_images ?? "\u2014"}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-[10px] text-muted-foreground">street_parked</p>
+                                          <p className="text-sm font-mono font-semibold">
+                                            {feat.street_parked ?? "\u2014"}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-[10px] text-muted-foreground">description</p>
+                                          <p className="text-sm font-mono font-semibold">
+                                            {feat.description ?? "\u2014"}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-[10px] text-muted-foreground">price_diff</p>
+                                          <p className="text-sm font-mono font-semibold">
+                                            {feat.price_diff !== null ? (feat.price_diff >= 0 ? "+" : "") + feat.price_diff.toFixed(2) : "\u2014"}
                                           </p>
                                         </div>
                                       </div>
@@ -1530,7 +1530,7 @@ export default function Home() {
                       <CardContent>
                         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                           {storeInfo.feature_view.features.map((feat) => {
-                            const isDerived = feat === "price_diff" || feat === "price_ratio";
+                            const isDerived = feat === "price_diff";
                             return (
                               <div
                                 key={feat}
@@ -1543,9 +1543,7 @@ export default function Home() {
                                 <p className={`text-xs font-mono font-medium ${isDerived ? "text-turo-teal" : ""}`}>{feat}</p>
                                 {isDerived ? (
                                   <p className="text-[10px] text-muted-foreground font-mono">
-                                    {feat === "price_diff"
-                                      ? "actual_price − recommended_price"
-                                      : "actual_price / recommended_price"}
+                                    actual_price − recommended_price
                                   </p>
                                 ) : (
                                   <p className="text-[10px] text-muted-foreground">raw attribute</p>

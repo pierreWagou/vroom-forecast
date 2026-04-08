@@ -1,55 +1,92 @@
 # Feature Store
 
 Feast-based feature store with offline (Parquet) and online (Redis) stores.
-Single source of truth for all vehicle features.
+Single source of truth for all vehicle features used in training and serving.
 
-## Data Flow
+## Stores
 
 ```mermaid
 graph LR
-    CSV[vehicles.csv<br/>reservations.csv] -->|seed.py| DB[(SQLite)]
-    UI[Serving API] -->|save vehicle| DB
-    DB -->|pipeline.py| PQ[Parquet<br/>offline store]
-    DB -->|pipeline.py<br/>new arrivals only| RD[(Redis<br/>online store)]
-    PQ --> Training
-    RD --> Serving
+    MP[Materialization Pipeline] -->|fleet vehicles| PQ
+    MP -->|new arrivals| RD
+    FM[FeatureMaterializer] -->|on vehicle save| RD
+
+    PQ[(Offline Store<br/><i>Parquet — fleet only</i>)]
+    RD[(Online Store<br/><i>Redis — new arrivals only</i>)]
+
+    PQ -->|read| TRAIN[Training]
+    PQ -->|read| OFR[OfflineFeatureReader<br/>fleet display]
+    RD -->|read| FL[FeatureLookup<br/>real-time inference]
 ```
 
-## Running
+**Offline store** (Parquet) — contains fleet vehicles only (those with an observed
+`num_reservations`, including 0). Populated by the
+[materialization pipeline](airflow/#materialization-pipeline) (daily via
+Airflow). Read by the training pipeline (as training data) and by the serving
+layer's `OfflineFeatureReader` for fleet vehicle display.
 
-```bash
-# Seed the database (idempotent):
-cd features && uv run python seed.py --data-dir ../data --db /feast-data/vehicles.db
+**Online store** (Redis) — contains only new arrivals (vehicles with no observed
+reservations). Populated two ways:
+- **Real-time:** [`FeatureMaterializer`](serving/#architecture) Ray actor
+  computes features and writes to Redis on vehicle save (via Redis pub/sub)
+- **Batch backfill:** [materialization pipeline](airflow/#materialization-pipeline)
+  writes new arrivals via `store.write_to_online_store()` on each daily run
 
-# Run the feature pipeline:
-cd features && uv run python pipeline.py --db /feast-data/vehicles.db
+Read by `FeatureLookup` for real-time inference on new arrivals.
 
-# Via Airflow (seed + materialize):
-docker compose exec airflow airflow dags trigger vroom_forecast_materialize
-```
+## Feature View
 
-## Key files
-
-- `seed.py` — Loads CSVs into SQLite (idempotent, one-time)
-- `pipeline.py` — Reads SQLite, computes features, writes Parquet, materializes new arrivals to Redis
-- `feature_repo/feature_store.yaml` — Feast config (file offline + Redis online)
-- `feature_repo/definitions.py` — Entity, FeatureView, schema, feature refs
+| Property | Value |
+|----------|-------|
+| Name | `vehicle_features` |
+| Entity | `vehicle` (key: `vehicle_id`) |
+| TTL | 365 days |
+| Source | `FileSource` (Parquet) |
 
 ## Feature Schema
 
-| Feature | Type | Source |
-|---------|------|--------|
-| technology | Int64 | Raw |
-| actual_price | Float64 | Raw |
-| recommended_price | Float64 | Raw |
-| num_images | Int64 | Raw |
-| street_parked | Int64 | Raw |
-| description | Int64 | Raw |
-| price_diff | Float64 | Derived (actual - recommended) |
-| price_ratio | Float64 | Derived (actual / recommended) |
-| num_reservations | Int64 (nullable) | Aggregated (label, not a feature — NULL for new arrivals) |
+5 model features — raw prices are vehicle attributes used to compute `price_diff`
+but are not model inputs (they are collinear with the derived feature).
+
+| Feature | Type | Source | Description |
+|---------|------|--------|-------------|
+| `technology` | Int64 | Raw | Instant-bookable tech package (0/1) |
+| `num_images` | Int64 | Raw | Number of listing photos (1–5) |
+| `street_parked` | Int64 | Raw | Street parked flag (0/1) |
+| `description` | Int64 | Raw | Character count of listing description |
+| `price_diff` | Float64 | Derived | `actual_price - recommended_price` |
+
+Label (not a model input):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `num_reservations` | Int64 (nullable) | Observed reservation count. `NULL` for new arrivals (no history yet), `0` or more for fleet vehicles. |
+
+## Feast Configuration
+
+```yaml
+# feature_repo/feature_store.yaml
+project: vroom_forecast
+provider: local
+registry: ${FEAST_REGISTRY}       # feast-data/registry.db
+online_store:
+  type: redis
+  connection_string: ${FEAST_REDIS}  # localhost:6379
+offline_store:
+  type: file
+```
+
+## Key Files
+
+- `feature_repo/feature_store.yaml` — Feast config (offline: file, online: Redis)
+- `feature_repo/definitions.py` — Entity, FileSource, FeatureView, feature refs
+- `seed.py` — Loads CSVs into SQLite (idempotent, used by the materialization pipeline)
+- `pipeline.py` — Computes features and writes to stores (called by Airflow)
 
 ## Database Schema
+
+The SQLite database is the mutable source of truth for vehicle data.
+It is populated by `seed.py` (CSV vehicles) and the serving API (UI vehicles).
 
 ```mermaid
 erDiagram

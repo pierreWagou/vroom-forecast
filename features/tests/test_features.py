@@ -96,19 +96,15 @@ class TestComputeFeatures:
         vehicles, reservations = load_from_db(seeded_db)
         df = compute_features(vehicles, reservations)
         assert "price_diff" in df.columns
-        assert "price_ratio" in df.columns
+        assert "price_ratio" not in df.columns  # dropped — collinear with price_diff
+        assert "actual_price" not in df.columns  # dropped — not a model feature
+        assert "recommended_price" not in df.columns  # dropped — not a model feature
 
     def test_price_diff_values(self, seeded_db: str) -> None:
         vehicles, reservations = load_from_db(seeded_db)
         df = compute_features(vehicles, reservations)
         row = df[df["vehicle_id"] == 1].iloc[0]
         assert row["price_diff"] == pytest.approx(-5.0)
-
-    def test_price_ratio_values(self, seeded_db: str) -> None:
-        vehicles, reservations = load_from_db(seeded_db)
-        df = compute_features(vehicles, reservations)
-        row = df[df["vehicle_id"] == 1].iloc[0]
-        assert row["price_ratio"] == pytest.approx(0.9)
 
     def test_event_timestamp_present(self, seeded_db: str) -> None:
         vehicles, reservations = load_from_db(seeded_db)

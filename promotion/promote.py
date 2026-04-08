@@ -150,7 +150,8 @@ def promote(
             return False
 
     except mlflow.exceptions.MlflowException as exc:
-        if getattr(exc, "error_code", "") != "RESOURCE_DOES_NOT_EXIST":
+        error_code = getattr(exc, "error_code", "")
+        if error_code not in ("RESOURCE_DOES_NOT_EXIST", "INVALID_PARAMETER_VALUE"):
             raise  # Re-raise unexpected errors (e.g. network failures)
         # No champion alias yet — promote as first champion
         client.set_registered_model_alias(model_name, CHAMPION_ALIAS, version)

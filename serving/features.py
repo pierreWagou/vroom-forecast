@@ -1,27 +1,26 @@
 """Feature engineering for the serving layer.
 
-Derived features (price_diff, price_ratio) must stay in sync with
-features/pipeline.py and training/train.py. The canonical definitions
-are in features/feature_repo/definitions.py.
+The derived feature (price_diff) must stay in sync with features/pipeline.py.
+The canonical definitions are in features/feature_repo/definitions.py.
+
+Model input: 5 features. Raw prices (actual_price, recommended_price) are
+vehicle attributes used to compute price_diff but are NOT model features —
+price_diff captures the full pricing signal with less collinearity.
 """
 
 import pandas as pd
 
 FEATURE_COLS = [
     "technology",
-    "actual_price",
-    "recommended_price",
     "num_images",
     "street_parked",
     "description",
     "price_diff",
-    "price_ratio",
 ]
 
 
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute derived pricing features."""
+    """Compute derived pricing feature."""
     df = df.copy()
     df["price_diff"] = df["actual_price"] - df["recommended_price"]
-    df["price_ratio"] = df["actual_price"] / df["recommended_price"].replace(0, float("nan"))
     return df

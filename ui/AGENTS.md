@@ -13,11 +13,12 @@ You are a frontend engineer building a demo UI for an ML prediction service.
 - No Python in this directory; this is a pure npm project
 - Tabs: Simulation (predict), Catalog (fleet + new arrivals), Benchmark, Feature Store
 
-## Known improvements
+## SSE event streams
 
-- **Replace polling with SSE for materialization status.** The Catalog tab polls
-  `GET /vehicles/{id}/features` every 2s for pending new arrivals. The correct
-  pattern is Server-Sent Events: the FeatureMaterializer Ray actor publishes
-  a "vehicle materialized" event to a Redis channel, and a `GET /vehicles/{id}/features/stream`
-  SSE endpoint subscribes and pushes to the client. This eliminates polling
-  and gives instant badge updates.
+The UI uses two Server-Sent Events connections:
+
+1. **`GET /events`** — model promotion events. Triggers health refresh on new champion.
+2. **`GET /vehicles/events`** — vehicle materialization events. The FeatureMaterializer
+   publishes to `vroom-forecast:vehicle-materialized` on Redis pub/sub when a new
+   arrival's features are written to the online store. The SSE endpoint forwards
+   these to the UI, replacing the previous polling approach.

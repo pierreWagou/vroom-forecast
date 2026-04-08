@@ -8,53 +8,52 @@ based on its listing attributes. Built as a take-home project for a
 
 ```mermaid
 graph TB
-    subgraph Data Layer
-        CSV[data/vehicles.csv + reservations.csv]
-        DB[(SQLite<br/>vehicles.db)]
-        CSV -->|seed.py<br/>one-time| DB
+    subgraph Frontend
+        UI[Next.js + shadcn/ui<br/><i>TypeScript, Tailwind</i>]
     end
 
-    subgraph Feature Store
-        DB -->|pipeline.py| PQ[Parquet<br/>offline store]
-        DB -->|pipeline.py<br/>new arrivals only| Redis[(Redis<br/>online store)]
-        DB -->|vehicle saved| RM{{FeatureMaterializer<br/>Ray actor}}
-        RM -->|real-time| Redis
+    subgraph Serving["Serving — Ray Serve"]
+        ING[VroomForecastApp<br/><i>FastAPI ingress</i>]
+        FC[FeatureComputer<br/><i>pandas</i>]
+        FL[FeatureLookup<br/><i>Feast client</i>]
+        OFR[OfflineFeatureReader<br/><i>pandas / Parquet</i>]
+        PRED[Predictor<br/><i>scikit-learn / MLflow</i>]
+        MAT[FeatureMaterializer<br/><i>Feast / Redis pub-sub</i>]
+        MRL[ModelReloadListener<br/><i>Redis pub-sub</i>]
     end
 
     subgraph Orchestration
-        AF[Airflow]
-        AF -->|daily| MAT[Materialize DAG<br/>seed + compute features]
-        AF -->|on fresh features| TR[Training DAG<br/>train + register model]
-        AF -->|event| PR[Promotion DAG<br/>champion/challenger]
-        TR -->|trigger| PR
+        AF[Airflow<br/><i>Docker, BashOperator + uv</i>]
     end
 
-    subgraph Model Registry
-        MLF[(MLflow)]
-        TR -->|log + register| MLF
-        PR -->|set champion alias| MLF
+    subgraph Storage
+        DB[(SQLite<br/><i>vehicle persistence</i>)]
+        PQ[(Parquet<br/><i>offline feature store</i>)]
+        RD[(Redis<br/><i>online feature store + pub-sub</i>)]
+        MLF[(MLflow<br/><i>model registry + tracking</i>)]
     end
 
-    subgraph Serving - Ray Serve
-        ING[VroomForecastApp<br/>FastAPI ingress]
-        FC[FeatureComputer<br/>on-the-fly features]
-        FL[FeatureLookup<br/>Feast online store]
-        PRED[Predictor<br/>champion model]
-
-        ING -->|/predict| FC --> PRED
-        ING -->|/predict/id| FL --> PRED
-        Redis --> FL
-        MLF -->|load model| PRED
+    subgraph ML Pipelines["ML Pipelines — Python (uv)"]
+        FEAT[features/<br/><i>Feast, pandas</i>]
+        TRAIN[training/<br/><i>scikit-learn, MLflow</i>]
+        PROMO[promotion/<br/><i>MLflow, Redis</i>]
     end
 
-    subgraph UI
-        NEXT[Next.js + shadcn/ui]
-        NEXT -->|HTTP| ING
-    end
-
-    PQ -->|read parquet| TR
-    PR -->|Redis pub/sub| PRED
+    UI --- ING
+    ING --- FC & FL & OFR & PRED
+    MAT --- RD & DB
+    MRL --- RD & PRED
+    FL --- RD
+    OFR --- PQ
+    PRED --- MLF
+    AF --- FEAT & TRAIN & PROMO
+    FEAT --- DB & PQ & RD
+    TRAIN --- PQ & MLF
+    PROMO --- MLF & RD
+    ING --- DB
 ```
+
+> **Zoom in:** [Feature Store](features/) · [Serving](serving/) · [Training](training/) · [Promotion](promotion/) · [Orchestration](airflow/) · [Frontend](ui/) · [Exploration](exploration/)
 
 ## Quick Start
 
@@ -86,7 +85,7 @@ open http://localhost:3000
 | Redis | localhost:6379 | Online feature store + pub/sub |
 | Redis Insight | [localhost:5540](http://localhost:5540) | Redis GUI |
 | Airflow | [localhost:8080](http://localhost:8080) | Pipeline orchestration |
-| Serving API | [localhost:8000](http://localhost:8000) | Prediction API (Ray Serve) |
+| Ray Serve API | [localhost:8000](http://localhost:8000) | Prediction API (Ray Serve) |
 | API Docs | [localhost:8000/docs](http://localhost:8000/docs) | Interactive Swagger UI |
 | Ray Dashboard | [localhost:8265](http://localhost:8265) | Ray cluster monitoring |
 | UI | [localhost:3000](http://localhost:3000) | Next.js frontend |
@@ -127,8 +126,8 @@ sequenceDiagram
     Seed->>DB: Load CSVs (idempotent)
     FP->>DB: Read all vehicles + reservations
     FP->>FP: Compute price_diff, price_ratio
-    FP->>PQ: Write offline store
-    FP->>RD: Materialize new arrivals to online store
+    FP->>PQ: Write offline store (fleet vehicles)
+    FP->>RD: Write online store (new arrivals only)
 
     Note over TR,MLF: On fresh features (Airflow Dataset)
     TR->>PQ: Read training data
@@ -142,6 +141,8 @@ sequenceDiagram
     PR->>RD: Publish "model-promoted" event
     RD->>SRV: Predictor reloads champion model
 ```
+
+> **Deep dive:** [Feature pipeline](features/) · [Training](training/) · [Promotion](promotion/) · [Airflow DAGs](airflow/) · [Serving](serving/)
 
 ## Dev Tools
 

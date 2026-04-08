@@ -84,8 +84,8 @@ Airflow credentials: `admin` / `admin`
 |---------|------|
 | MLflow UI | http://localhost:5001 |
 | Airflow UI | http://localhost:8080 |
-| Serving API | http://localhost:8000 |
-| Serving docs | http://localhost:8000/docs |
+| Ray Serve API | http://localhost:8000 |
+| Ray Serve docs | http://localhost:8000/docs |
 | Ray Dashboard | http://localhost:8265 |
 | Redis | localhost:6379 |
 | Redis Insight | http://localhost:5540 |

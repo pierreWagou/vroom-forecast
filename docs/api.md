@@ -138,13 +138,10 @@ when the serving container is running.
 {
   "vehicle_id": 42,
   "technology": 1,
-  "actual_price": 45.0,
-  "recommended_price": 50.0,
   "num_images": 8,
   "street_parked": 0,
   "description": 250,
   "price_diff": -5.0,
-  "price_ratio": 0.9,
   "materialized": true,
   "store": "online"
 }

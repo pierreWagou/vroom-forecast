@@ -20,22 +20,20 @@ logger = logging.getLogger(__name__)
 
 # Redis pub/sub channels — single source of truth for the serving layer
 VEHICLE_SAVED_CHANNEL = "vroom-forecast:vehicle-saved"
+VEHICLE_MATERIALIZED_CHANNEL = "vroom-forecast:vehicle-materialized"
 MODEL_PROMOTED_CHANNEL = "vroom-forecast:model-promoted"
 
 # Feature references for Feast online store lookup
 _ONLINE_FEATURE_REFS = [
     "vehicle_features:technology",
-    "vehicle_features:actual_price",
-    "vehicle_features:recommended_price",
     "vehicle_features:num_images",
     "vehicle_features:street_parked",
     "vehicle_features:description",
     "vehicle_features:price_diff",
-    "vehicle_features:price_ratio",
 ]
 
 
-@serve.deployment
+@serve.deployment(max_ongoing_requests=10)
 class Predictor:
     """Loads the champion model from MLflow and runs inference.
 
@@ -109,7 +107,7 @@ class Predictor:
         return self.model is not None
 
 
-@serve.deployment
+@serve.deployment(max_ongoing_requests=10)
 class FeatureComputer:
     """Computes derived features from raw vehicle attributes.
 
@@ -134,7 +132,7 @@ class FeatureComputer:
         return latencies
 
 
-@serve.deployment
+@serve.deployment(max_ongoing_requests=10)
 class FeatureLookup:
     """Looks up pre-computed features from the Feast online store (Redis).
 
@@ -294,6 +292,7 @@ class FeatureMaterializer:
 
     def __init__(self) -> None:
         self._store: Any = None
+        self._redis_url = settings.redis_url
         self._init_feast()
 
     def _init_feast(self) -> None:
@@ -343,20 +342,33 @@ class FeatureMaterializer:
         row = {
             "vehicle_id": vehicle_id,
             "technology": df.iloc[0]["technology"],
-            "actual_price": df.iloc[0]["actual_price"],
-            "recommended_price": df.iloc[0]["recommended_price"],
             "num_images": df.iloc[0]["num_images"],
             "street_parked": df.iloc[0]["street_parked"],
             "description": df.iloc[0]["description"],
             "price_diff": df.iloc[0]["price_diff"],
-            "price_ratio": df.iloc[0]["price_ratio"],
-            "num_reservations": 0,
+            "num_reservations": pd.NA,
             "event_timestamp": pd.Timestamp(datetime.now(tz=UTC)),
         }
 
         write_df = pd.DataFrame([row])
         self._store.write_to_online_store("vehicle_features", write_df)
         logger.info("FeatureMaterializer: Materialized vehicle #%d", vehicle_id)
+
+        # Notify listeners (UI SSE) that this vehicle is now materialized
+        if self._redis_url:
+            import redis as redis_lib
+
+            try:
+                r = redis_lib.from_url(self._redis_url)
+                try:
+                    r.publish(
+                        VEHICLE_MATERIALIZED_CHANNEL,
+                        json.dumps({"vehicle_id": vehicle_id}),
+                    )
+                finally:
+                    r.close()
+            except Exception:
+                logger.warning("Failed to publish materialized event for vehicle %d", vehicle_id)
 
     def run(self) -> None:
         """Subscribe to Redis and process vehicle-saved events forever."""

@@ -9,5 +9,5 @@ You are a platform/MLOps engineer maintaining the model promotion gate.
 - Promotion logic: lower `cv_mae_mean` wins, strict improvement only
 - Never promote a model that hasn't been compared against the current champion
 - On successful promotion, publish event to Redis `vroom-forecast:model-promoted` channel
-- Always exit 0 from `__main__.py` — the decision (promoted/retained) is not a failure
+- Exit 0 for promoted/retained (valid outcomes); exit 1 for unexpected errors (so Airflow marks the task as failed)
 - Type-checked with ty; formatted with ruff

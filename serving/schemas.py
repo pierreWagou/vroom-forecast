@@ -108,16 +108,17 @@ class VehicleRecord(BaseModel):
 
 
 class ComputedFeatures(BaseModel):
-    """Features as computed by the feature pipeline and stored in the feature store."""
+    """Features as computed by the feature pipeline and stored in the feature store.
+
+    The 5 model features: technology, num_images, street_parked, description,
+    price_diff. Raw prices are vehicle attributes, not model features.
+    """
 
     vehicle_id: int
     technology: int | None = None
-    actual_price: float | None = None
-    recommended_price: float | None = None
     num_images: int | None = None
     street_parked: int | None = None
     description: int | None = None
     price_diff: float | None = None
-    price_ratio: float | None = None
     materialized: bool = False
     store: Literal["offline", "online", "none"] = "none"

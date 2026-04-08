@@ -33,16 +33,13 @@ vehicle_features_view = FeatureView(
     name="vehicle_features",
     entities=[vehicle],
     schema=[
-        # Raw attributes
+        # Raw attributes (model features)
         Field(name="technology", dtype=Int64),
-        Field(name="actual_price", dtype=Float64),
-        Field(name="recommended_price", dtype=Float64),
         Field(name="num_images", dtype=Int64),
         Field(name="street_parked", dtype=Int64),
         Field(name="description", dtype=Int64),
-        # Derived features (computed by the feature pipeline)
+        # Derived feature (computed by the feature pipeline)
         Field(name="price_diff", dtype=Float64),
-        Field(name="price_ratio", dtype=Float64),
         # Label (stored for training convenience, not used as a feature)
         Field(name="num_reservations", dtype=Int64),
     ],
@@ -56,13 +53,10 @@ vehicle_features_view = FeatureView(
 
 FEATURE_REFS = [
     "vehicle_features:technology",
-    "vehicle_features:actual_price",
-    "vehicle_features:recommended_price",
     "vehicle_features:num_images",
     "vehicle_features:street_parked",
     "vehicle_features:description",
     "vehicle_features:price_diff",
-    "vehicle_features:price_ratio",
 ]
 
 LABEL_REF = "vehicle_features:num_reservations"

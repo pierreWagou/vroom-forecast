@@ -22,13 +22,10 @@ logger = logging.getLogger(__name__)
 
 FEATURE_COLS = [
     "technology",
-    "actual_price",
-    "recommended_price",
     "num_images",
     "street_parked",
     "description",
     "price_diff",
-    "price_ratio",
 ]
 
 TARGET_COL = "num_reservations"

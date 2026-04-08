@@ -30,11 +30,6 @@ class TestEngineerFeatures:
         result = engineer_features(df)
         assert result["price_diff"].iloc[0] == pytest.approx(-5.0)
 
-    def test_price_ratio(self) -> None:
-        df = pd.DataFrame([SAMPLE_VEHICLE])
-        result = engineer_features(df)
-        assert result["price_ratio"].iloc[0] == pytest.approx(0.9)
-
     def test_all_feature_cols_present(self) -> None:
         df = pd.DataFrame([SAMPLE_VEHICLE])
         result = engineer_features(df)
@@ -111,7 +106,6 @@ class TestSchemaContract:
         fields = set(ComputedFeatures.model_fields.keys())
         assert "materialized" in fields
         assert "price_diff" in fields
-        assert "price_ratio" in fields
         assert "store" in fields
 
     def test_computed_features_store_literal(self) -> None:
@@ -214,26 +208,20 @@ class TestOfflineFeatureReader:
                 {
                     "vehicle_id": 1,
                     "technology": 1,
-                    "actual_price": 45.0,
-                    "recommended_price": 50.0,
                     "num_images": 8,
                     "street_parked": 0,
                     "description": 250,
                     "price_diff": -5.0,
-                    "price_ratio": 0.9,
                     "num_reservations": 5,
                     "event_timestamp": pd.Timestamp("2026-01-01", tz="UTC"),
                 },
                 {
                     "vehicle_id": 2,
                     "technology": 0,
-                    "actual_price": 100.0,
-                    "recommended_price": 50.0,
                     "num_images": 3,
                     "street_parked": 1,
                     "description": 100,
                     "price_diff": 50.0,
-                    "price_ratio": 2.0,
                     "num_reservations": 12,
                     "event_timestamp": pd.Timestamp("2026-01-01", tz="UTC"),
                 },
@@ -278,13 +266,10 @@ class TestOfflineFeatureReader:
             columns=[
                 "vehicle_id",
                 "technology",
-                "actual_price",
-                "recommended_price",
                 "num_images",
                 "street_parked",
                 "description",
                 "price_diff",
-                "price_ratio",
                 "num_reservations",
                 "event_timestamp",
             ]

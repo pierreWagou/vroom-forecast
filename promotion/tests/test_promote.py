@@ -73,6 +73,35 @@ class TestPromote:
         client.set_registered_model_alias.assert_called_once_with("model", CHAMPION_ALIAS, "1")
 
     @patch("promote.mlflow")
+    def test_first_champion_promoted_invalid_parameter(self, mock_mlflow: MagicMock) -> None:
+        """MLflow 3.x returns INVALID_PARAMETER_VALUE when alias doesn't exist."""
+        from mlflow.exceptions import MlflowException
+        from promote import CANDIDATE_ALIAS, promote
+
+        client = MagicMock()
+        mock_mlflow.MlflowClient.return_value = client
+        mock_mlflow.exceptions.MlflowException = MlflowException
+
+        client.get_model_version.return_value = self._make_mv("1")
+        client.get_run.return_value = self._make_run("cv_mae_mean", 2.5)
+
+        # Candidate alias resolves fine; champion alias raises
+        no_champion_exc = MlflowException("Registered model alias champion not found.")
+        no_champion_exc.error_code = "INVALID_PARAMETER_VALUE"
+
+        def alias_side_effect(name: str, alias: str) -> MagicMock:
+            if alias == CANDIDATE_ALIAS:
+                return self._make_mv("1")
+            raise no_champion_exc
+
+        client.get_model_version_by_alias.side_effect = alias_side_effect
+
+        result = promote(mlflow_uri="http://test", model_name="model", metric_name="cv_mae_mean")
+
+        assert result is True
+        client.set_registered_model_alias.assert_called_once_with("model", CHAMPION_ALIAS, "1")
+
+    @patch("promote.mlflow")
     def test_better_candidate_promoted(self, mock_mlflow: MagicMock) -> None:
         from mlflow.exceptions import MlflowException
         from promote import promote

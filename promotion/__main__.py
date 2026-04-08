@@ -18,9 +18,9 @@ if __name__ == "__main__":
             metric_name=args.metric,
             redis_url=args.redis_url,
         )
+        # Exit 0 for both promoted and retained — these are valid outcomes
         print("promoted" if promoted else "retained")
     except Exception:
         logger.exception("Promotion failed.")
         print("error", file=sys.stderr)
-        # Always exit 0 — the decision (or failure) is not a pipeline failure.
-        # The caller (Airflow) should check stdout for "promoted"/"retained"/"error".
+        sys.exit(1)

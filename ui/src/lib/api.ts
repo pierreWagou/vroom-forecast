@@ -179,13 +179,10 @@ export async function predictById(vehicleId: number): Promise<PredictionResponse
 export interface ComputedFeatures {
   vehicle_id: number;
   technology: number | null;
-  actual_price: number | null;
-  recommended_price: number | null;
   num_images: number | null;
   street_parked: number | null;
   description: number | null;
   price_diff: number | null;
-  price_ratio: number | null;
   materialized: boolean;
   store: "offline" | "online" | "none";
 }

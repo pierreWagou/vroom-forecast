@@ -8,8 +8,8 @@ procs:
   airflow:
     shell: "docker compose up --build --menu=false airflow"
     stop: "SIGINT"
-  serving:
-    shell: "docker compose up --build --menu=false serving"
+  ray-serve:
+    shell: "docker compose up --build --menu=false ray-serve"
     stop: "SIGINT"
   ui:
     cmd: ["npm", "run", "dev"]

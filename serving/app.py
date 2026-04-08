@@ -51,7 +51,7 @@ app.add_middleware(
 )
 
 
-@serve.deployment
+@serve.deployment(max_ongoing_requests=100)
 @serve.ingress(app)
 class VroomForecastApp:
     """Ray Serve ingress — holds handles to all downstream deployments."""
@@ -135,13 +135,10 @@ class VroomForecastApp:
             "entity_key": "vehicle_id",
             "features": [
                 "technology",
-                "actual_price",
-                "recommended_price",
                 "num_images",
                 "street_parked",
                 "description",
                 "price_diff",
-                "price_ratio",
             ],
             "label": "num_reservations",
             "ttl_days": 365,
@@ -164,26 +161,24 @@ class VroomForecastApp:
         predictor_handle = self.predictor
 
         async def event_stream() -> AsyncGenerator[str, None]:
-            import redis
+            import redis.asyncio as aioredis
 
             if settings.redis_url is None:
-                # Keep connection open but idle — the UI will just wait
                 while True:
                     await asyncio.sleep(60)
                 return
 
-            r = redis.from_url(settings.redis_url)
+            r = aioredis.from_url(settings.redis_url)
             pubsub = r.pubsub()
             from serving.model import MODEL_PROMOTED_CHANNEL
 
-            pubsub.subscribe(MODEL_PROMOTED_CHANNEL)
+            await pubsub.subscribe(MODEL_PROMOTED_CHANNEL)
 
             try:
                 while True:
-                    message = pubsub.get_message(timeout=1.0)
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                     if message and message["type"] == "message":
                         data = json.loads(message["data"])
-                        # Fetch the actual loaded version from the Predictor
                         version = await predictor_handle.get_version.remote()
                         event_data = {
                             "type": "model-promoted",
@@ -192,12 +187,60 @@ class VroomForecastApp:
                         }
                         yield f"data: {json.dumps(event_data)}\n\n"
                     else:
-                        # Send a keepalive comment every second to detect broken connections
                         yield ": keepalive\n\n"
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.1)
             finally:
-                pubsub.close()
-                r.close()
+                await pubsub.close()
+                await r.close()
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.get("/vehicles/events")
+    async def vehicle_events(self) -> StreamingResponse:
+        """SSE endpoint — streams vehicle-materialized events from Redis pub/sub.
+
+        The UI subscribes via EventSource to get notified when a new arrival's
+        features are materialized, replacing polling.
+        """
+
+        async def event_stream() -> AsyncGenerator[str, None]:
+            import redis.asyncio as aioredis
+
+            if settings.redis_url is None:
+                while True:
+                    await asyncio.sleep(60)
+                return
+
+            r = aioredis.from_url(settings.redis_url)
+            pubsub = r.pubsub()
+            from serving.model import VEHICLE_MATERIALIZED_CHANNEL
+
+            await pubsub.subscribe(VEHICLE_MATERIALIZED_CHANNEL)
+
+            try:
+                while True:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    if message and message["type"] == "message":
+                        data = json.loads(message["data"])
+                        event_data = {
+                            "type": "vehicle-materialized",
+                            "vehicle_id": data.get("vehicle_id"),
+                        }
+                        yield f"data: {json.dumps(event_data)}\n\n"
+                    else:
+                        yield ": keepalive\n\n"
+                    await asyncio.sleep(0.1)
+            finally:
+                await pubsub.close()
+                await r.close()
 
         return StreamingResponse(
             event_stream(),
@@ -257,13 +300,10 @@ class VroomForecastApp:
                     results[vid] = ComputedFeatures(
                         vehicle_id=vid,
                         technology=int(row["technology"]),
-                        actual_price=float(row["actual_price"]),
-                        recommended_price=float(row["recommended_price"]),
                         num_images=int(row["num_images"]),
                         street_parked=int(row["street_parked"]),
                         description=int(row["description"]),
                         price_diff=float(row["price_diff"]),
-                        price_ratio=float(row["price_ratio"]),
                         materialized=True,
                         store="offline",
                     )
@@ -283,13 +323,10 @@ class VroomForecastApp:
                             results[vid] = ComputedFeatures(
                                 vehicle_id=vid,
                                 technology=int(row["technology"]),
-                                actual_price=float(row["actual_price"]),
-                                recommended_price=float(row["recommended_price"]),
                                 num_images=int(row["num_images"]),
                                 street_parked=int(row["street_parked"]),
                                 description=int(row["description"]),
                                 price_diff=float(row["price_diff"]),
-                                price_ratio=float(row["price_ratio"]),
                                 materialized=True,
                                 store="online",
                             )
@@ -316,13 +353,10 @@ class VroomForecastApp:
                     return ComputedFeatures(
                         vehicle_id=vehicle_id,
                         technology=int(row["technology"]),
-                        actual_price=float(row["actual_price"]),
-                        recommended_price=float(row["recommended_price"]),
                         num_images=int(row["num_images"]),
                         street_parked=int(row["street_parked"]),
                         description=int(row["description"]),
                         price_diff=float(row["price_diff"]),
-                        price_ratio=float(row["price_ratio"]),
                         materialized=True,
                         store="offline",
                     )
@@ -341,13 +375,10 @@ class VroomForecastApp:
             return ComputedFeatures(
                 vehicle_id=vehicle_id,
                 technology=int(row["technology"]),
-                actual_price=float(row["actual_price"]),
-                recommended_price=float(row["recommended_price"]),
                 num_images=int(row["num_images"]),
                 street_parked=int(row["street_parked"]),
                 description=int(row["description"]),
                 price_diff=float(row["price_diff"]),
-                price_ratio=float(row["price_ratio"]),
                 materialized=True,
                 store="online",
             )

@@ -50,11 +50,11 @@ extra_css:
 # Navigation — symlinked READMEs in docs/
 nav:
   - Home: index.md
+  - Feature Store: features.md
   - Pipeline:
-    - Feature Store: features.md
+    - Materialization: airflow.md
     - Training: training.md
     - Promotion: promotion.md
-    - Orchestration: airflow.md
   - Serving:
     - Overview: serving.md
     - API Reference: api.md

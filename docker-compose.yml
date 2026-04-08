@@ -78,7 +78,7 @@ services:
       && echo admin > /opt/airflow/standalone_admin_password.txt
       && airflow standalone"
 
-  serving:
+  ray-serve:
     build:
       context: .
       dockerfile: serving/Dockerfile
@@ -101,15 +101,15 @@ services:
       - FEAST_REGISTRY=/feast-data/registry.db
       - FEAST_REDIS=redis:6379
     volumes:
-      - ./mlartifacts:/mlartifacts
+      - ./mlartifacts:/mlartifacts:ro
       - ./feast-data:/feast-data
       - ./features/feature_repo:/app/feature_repo:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
 
 volumes:
   redis-data:

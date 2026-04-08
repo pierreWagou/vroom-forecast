@@ -70,9 +70,11 @@ def compute_features(vehicles: pd.DataFrame, reservations: pd.DataFrame) -> pd.D
     # UI vehicles stay NaN — pd.Int64Dtype() allows nullable integers
     df["num_reservations"] = df["num_reservations"].astype("Int64")
 
-    # Derived features — the ONLY place these are computed
+    # Derived feature — the ONLY place this is computed
     df["price_diff"] = df["actual_price"] - df["recommended_price"]
-    df["price_ratio"] = df["actual_price"] / df["recommended_price"].replace(0, float("nan"))
+
+    # Drop raw prices — not model features (price_diff captures the signal)
+    df = df.drop(columns=["actual_price", "recommended_price"])
 
     # Feast requires a timestamp column
     df["event_timestamp"] = pd.Timestamp(datetime.now(tz=UTC))
@@ -115,10 +117,22 @@ def apply_and_materialize(feast_repo: str, features_df: pd.DataFrame) -> None:
 
 
 def run(db_path: str, feast_repo: str, parquet_path: str) -> None:
-    """Full feature pipeline: load → compute → write → apply → materialize."""
+    """Full feature pipeline: load → compute → write → apply → materialize.
+
+    The offline store (Parquet) only contains fleet vehicles — those with an
+    observed num_reservations (including 0). This is the training dataset.
+
+    New arrivals (num_reservations is NULL) are written only to the online
+    store (Redis) for real-time inference.
+    """
     vehicles, reservations = load_from_db(db_path)
     df = compute_features(vehicles, reservations)
-    write_parquet(df, parquet_path)
+
+    # Offline store: fleet vehicles only (observed outcomes for training)
+    fleet = df[df["num_reservations"].notna()]
+    write_parquet(fleet, parquet_path)
+
+    # Online store: new arrivals only (no observed outcome, needs inference)
     apply_and_materialize(feast_repo, df)
     logger.info("Feature pipeline complete.")
 
