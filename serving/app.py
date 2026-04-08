@@ -27,10 +27,13 @@ from serving.schemas import (
     BenchmarkRequest,
     BenchmarkResponse,
     ComputedFeatures,
+    DeleteVehicleResponse,
     HealthResponse,
     PredictionResponse,
     ReloadResponse,
     SaveVehicleResponse,
+    StoreDetails,
+    StoreInfoResponse,
     VehicleFeatures,
     VehicleIdRequest,
     VehicleRecord,
@@ -93,62 +96,60 @@ class VroomForecastApp:
             current_version=current,
         )
 
-    @app.get("/stores")
-    async def store_info(self) -> dict:
+    @app.get("/stores", response_model=StoreInfoResponse)
+    async def store_info(self) -> StoreInfoResponse:
         """Operational info about both feature stores."""
-        import os
 
-        # Offline store info
+        # Offline store info (run blocking I/O in a thread)
         offline_available = await self.offline_reader.is_available.remote()
-        offline_info: dict = {"available": offline_available, "type": "file (Parquet)"}
+        offline_info = StoreDetails(available=offline_available, type="file (Parquet)")
         if offline_available and settings.offline_store_path:
-            try:
-                stat = os.stat(settings.offline_store_path)
-                offline_info["path"] = settings.offline_store_path
-                offline_info["size_bytes"] = stat.st_size
-                offline_info["last_modified"] = stat.st_mtime
-            except OSError:
-                pass
+            offline_path = settings.offline_store_path
 
-        # Online store info
+            def _stat_offline() -> StoreDetails:
+                import os
+
+                info = StoreDetails(available=True, type="file (Parquet)")
+                try:
+                    stat = os.stat(offline_path)
+                    info.path = offline_path
+                    info.size_bytes = stat.st_size
+                    info.last_modified = stat.st_mtime
+                except OSError:
+                    pass
+                return info
+
+            offline_info = await asyncio.to_thread(_stat_offline)
+
+        # Online store info (run blocking Redis calls in a thread)
         feast_online = await self.feature_lookup.is_available.remote()
-        online_info: dict = {"available": feast_online, "type": "redis"}
+        online_info = StoreDetails(available=feast_online, type="redis")
         if feast_online and settings.redis_url:
-            try:
+            redis_url = settings.redis_url
+
+            def _stat_online() -> StoreDetails:
                 import redis as redis_lib
 
-                r = redis_lib.from_url(settings.redis_url)
+                info = StoreDetails(available=True, type="redis")
                 try:
-                    info = r.info("memory")
-                    online_info["used_memory_human"] = info.get("used_memory_human", "?")
-                    online_info["keys"] = r.dbsize()
-                    online_info["redis_url"] = settings.redis_url
-                finally:
-                    r.close()
-            except Exception:
-                pass
+                    r = redis_lib.from_url(redis_url)
+                    try:
+                        mem_info = r.info("memory")
+                        info.used_memory_human = mem_info.get("used_memory_human", "?")
+                        info.keys = r.dbsize()
+                        info.redis_url = redis_url
+                    finally:
+                        r.close()
+                except Exception:
+                    pass
+                return info
 
-        # Feature view definition
-        feature_view = {
-            "name": "vehicle_features",
-            "entity": "vehicle",
-            "entity_key": "vehicle_id",
-            "features": [
-                "technology",
-                "num_images",
-                "street_parked",
-                "description",
-                "price_diff",
-            ],
-            "label": "num_reservations",
-            "ttl_days": 365,
-        }
+            online_info = await asyncio.to_thread(_stat_online)
 
-        return {
-            "offline_store": offline_info,
-            "online_store": online_info,
-            "feature_view": feature_view,
-        }
+        return StoreInfoResponse(
+            offline_store=offline_info,
+            online_store=online_info,
+        )
 
     @app.get("/events")
     async def events(self) -> StreamingResponse:
@@ -259,8 +260,8 @@ class VroomForecastApp:
             vehicle_id=vehicle_id, status="saved", event_published=event_published
         )
 
-    @app.delete("/vehicles/{vehicle_id}")
-    async def delete_vehicle_endpoint(self, vehicle_id: int) -> dict[str, str]:
+    @app.delete("/vehicles/{vehicle_id}", response_model=DeleteVehicleResponse)
+    async def delete_vehicle_endpoint(self, vehicle_id: int) -> DeleteVehicleResponse:
         """Delete a new arrival vehicle. Fleet vehicles cannot be deleted."""
         deleted = await asyncio.to_thread(delete_vehicle, vehicle_id)
         if not deleted:
@@ -268,7 +269,7 @@ class VroomForecastApp:
                 status_code=404,
                 detail=f"Vehicle {vehicle_id} not found or is a fleet vehicle (cannot delete).",
             )
-        return {"status": "deleted", "vehicle_id": str(vehicle_id)}
+        return DeleteVehicleResponse(status="deleted", vehicle_id=str(vehicle_id))
 
     @app.get("/vehicles", response_model=list[VehicleRecord])
     async def list_vehicles_endpoint(self) -> list[VehicleRecord]:

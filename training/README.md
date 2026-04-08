@@ -36,5 +36,10 @@ uv run --project training python -m training \
 
 ## Feature columns
 
-`technology`, `actual_price`, `recommended_price`, `num_images`,
-`street_parked`, `description`, `price_diff`, `price_ratio`
+`technology`, `num_images`, `street_parked`, `description`, `price_diff`
+
+Target: `num_reservations`
+
+> Raw prices (`actual_price`, `recommended_price`) are vehicle attributes used
+> to compute `price_diff` but are not model inputs — `price_diff` captures the
+> full pricing signal with less collinearity. See [exploration](../exploration/).

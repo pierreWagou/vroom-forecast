@@ -4,9 +4,17 @@
 # Python
 __pycache__/
 *.py[codz]
+*.egg-info/
+dist/
+build/
 
 # Virtual environment
 .venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
 
 # MLflow local data
 mlruns/

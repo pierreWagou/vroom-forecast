@@ -30,6 +30,7 @@ when the serving container is running.
 | `GET` | `/vehicles/{id}/features` | Get computed features for one vehicle |
 | `GET` | `/stores` | Operational info about offline and online stores |
 | `GET` | `/events` | SSE stream for model promotion events |
+| `GET` | `/vehicles/events` | SSE stream for vehicle materialization events |
 
 ## Schemas
 

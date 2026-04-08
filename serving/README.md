@@ -57,6 +57,7 @@ docker compose up serving    # port 8000 + Ray dashboard on 8265
 | GET | `/vehicles/{id}/features` | Get computed features for one vehicle |
 | GET | `/stores` | Operational info about offline and online stores |
 | GET | `/events` | SSE stream for model promotion events |
+| GET | `/vehicles/events` | SSE stream for vehicle materialization events |
 
 Interactive docs at `http://localhost:8000/docs`.
 

@@ -14,7 +14,7 @@ repos:
     hooks:
       - id: ty-training
         name: ty (training)
-        entry: uvx ty check --python training/.venv training/
+        entry: uvx ty check --python training/.venv --config-file training/ty.toml training/ --exclude training/tests/
         language: system
         files: ^training/
         types: [python]
@@ -22,7 +22,7 @@ repos:
 
       - id: ty-promotion
         name: ty (promotion)
-        entry: uvx ty check --python promotion/.venv promotion/
+        entry: uvx ty check --python promotion/.venv --config-file promotion/ty.toml promotion/ --exclude promotion/tests/
         language: system
         files: ^promotion/
         types: [python]
@@ -38,7 +38,7 @@ repos:
 
       - id: ty-features
         name: ty (features)
-        entry: uvx ty check --python features/.venv features/
+        entry: uvx ty check --python features/.venv --config-file features/ty.toml features/ --exclude features/tests/
         language: system
         files: ^features/
         types: [python]

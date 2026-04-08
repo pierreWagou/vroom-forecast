@@ -58,10 +58,17 @@ def seed(data_dir: Path, db_path: str) -> None:
     conn = init_db(db_path)
 
     try:
-        # Check if already seeded
-        count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE source = 'csv'").fetchone()[0]
-        if count > 0:
-            logger.info("Database already seeded with %d CSV vehicles — skipping.", count)
+        # Check if already seeded (both tables)
+        vehicle_count = conn.execute(
+            "SELECT COUNT(*) FROM vehicles WHERE source = 'csv'"
+        ).fetchone()[0]
+        reservation_count = conn.execute("SELECT COUNT(*) FROM reservations").fetchone()[0]
+        if vehicle_count > 0 and reservation_count > 0:
+            logger.info(
+                "Database already seeded with %d CSV vehicles and %d reservations — skipping.",
+                vehicle_count,
+                reservation_count,
+            )
             return
 
         # Load and insert vehicles

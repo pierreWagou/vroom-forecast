@@ -87,9 +87,7 @@ graph TB
 |---|---|
 | `mise run setup` | Bootstrap all sub-project deps + pre-commit hooks |
 | `mise run dev` | Start all services (mprocs: Docker, UI, Jupyter, Docs) |
-| `mise run test` | Run all tests across sub-projects |
-| `mise run lint` | Run all linters and type checkers |
-| `mise run check` | Lint + test (full CI-equivalent) |
+| `mise run check` | Full CI check: lint + type check + tests (pre-commit) |
 | `mise run seed` | Seed DB + materialize features (local, no Airflow) |
 | `mise run train` | Train a model locally |
 | `mise run promote` | Run champion/challenger promotion locally |
@@ -143,7 +141,7 @@ sequenceDiagram
     Note over Seed,DB: Daily (Airflow)
     Seed->>DB: Load CSVs (idempotent)
     FP->>DB: Read all vehicles + reservations
-    FP->>FP: Compute price_diff, price_ratio
+    FP->>FP: Compute price_diff
     FP->>PQ: Write offline store (fleet vehicles)
     FP->>RD: Write online store (new arrivals only)
 

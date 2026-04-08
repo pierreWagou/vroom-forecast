@@ -51,10 +51,19 @@ DATA_DIR = REPO_ROOT / "data"
 # ## 2. MLflow Setup
 
 # %%
-mlflow.set_tracking_uri("http://localhost:5001")
-mlflow.set_experiment("vroom-forecast-exploration")
+TRACKING_URI = "http://localhost:5001"
+EXPERIMENT_NAME = "vroom-forecast-exploration"
+
+mlflow.set_tracking_uri(TRACKING_URI)
+
+# Create experiment with proxied artifact storage if it doesn't exist yet.
+# Existing experiments keep their artifact_location, so we only set it on creation.
+if not mlflow.get_experiment_by_name(EXPERIMENT_NAME):
+    mlflow.create_experiment(EXPERIMENT_NAME, artifact_location="mlflow-artifacts:/")
+mlflow.set_experiment(EXPERIMENT_NAME)
+
 print(f"MLflow tracking URI: {mlflow.get_tracking_uri()}")
-print(f"Experiment: {mlflow.get_experiment_by_name('vroom-forecast-exploration')}")
+print(f"Experiment: {mlflow.get_experiment_by_name(EXPERIMENT_NAME)}")
 
 # %% [markdown]
 # ## 3. Load and Inspect Data

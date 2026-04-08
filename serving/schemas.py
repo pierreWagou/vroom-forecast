@@ -122,3 +122,42 @@ class ComputedFeatures(BaseModel):
     price_diff: float | None = None
     materialized: bool = False
     store: Literal["offline", "online", "none"] = "none"
+
+
+class StoreDetails(BaseModel):
+    """Operational info about a single store (offline or online)."""
+
+    available: bool = False
+    type: str = ""
+    path: str | None = None
+    size_bytes: int | None = None
+    last_modified: float | None = None
+    used_memory_human: str | None = None
+    keys: int | None = None
+    redis_url: str | None = None
+
+
+class FeatureViewInfo(BaseModel):
+    """Feature view definition summary."""
+
+    name: str = "vehicle_features"
+    entity: str = "vehicle"
+    entity_key: str = "vehicle_id"
+    features: list[str] = ["technology", "num_images", "street_parked", "description", "price_diff"]
+    label: str = "num_reservations"
+    ttl_days: int = 365
+
+
+class StoreInfoResponse(BaseModel):
+    """Combined offline + online store info."""
+
+    offline_store: StoreDetails
+    online_store: StoreDetails
+    feature_view: FeatureViewInfo = FeatureViewInfo()
+
+
+class DeleteVehicleResponse(BaseModel):
+    """Response for vehicle deletion."""
+
+    status: str
+    vehicle_id: str
