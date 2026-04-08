@@ -57,23 +57,38 @@ graph TB
 
 ## Quick Start
 
+### Prerequisites
+
+Install [mise](https://mise.jdx.dev/getting-started.html) (manages Python, Node, uv, mprocs) and [Docker](https://docs.docker.com/get-docker/).
+
 ```bash
-# 1. Start infrastructure (MLflow, Redis, Airflow, Serving)
-docker compose up -d
+# 1. Install all tools and project dependencies
+mise install && mise run setup
 
-# 2. Start the UI
-cd ui && npm install && npm run dev
+# 2. Start everything (Docker services + UI + Jupyter + Docs)
+mise run dev
 
-# 3. Seed the database and materialize features
+# 3. Seed the database and train a model (in another terminal)
 docker compose exec airflow airflow dags trigger vroom_forecast_materialize
 
-# 4. Train a model (auto-triggers after materialize via Airflow Dataset)
-#    Or trigger manually:
-docker compose exec airflow airflow dags trigger vroom_forecast_training
-
-# 5. Open the UI
+# 4. Open the UI
 open http://localhost:3000
 ```
+
+### Available Tasks
+
+| Command | Description |
+|---|---|
+| `mise run setup` | Bootstrap all sub-project deps + pre-commit hooks |
+| `mise run dev` | Start all services (mprocs: Docker, UI, Jupyter, Docs) |
+| `mise run docker` | Start Docker services only |
+| `mise run test` | Run all tests across sub-projects |
+| `mise run lint` | Run all linters and type checkers |
+| `mise run check` | Lint + test (full CI-equivalent) |
+| `mise run seed` | Seed DB + materialize features (local, no Airflow) |
+| `mise run train` | Train a model locally |
+| `mise run promote` | Run champion/challenger promotion locally |
+| `mise run pipeline` | Full ML pipeline: seed → train → promote |
 
 > **Airflow UI:** http://localhost:8080 — credentials: `admin` / `admin`
 
