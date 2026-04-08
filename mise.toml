@@ -14,6 +14,8 @@ mprocs = "latest"
 # Feast env vars for local dev (feature_store.yaml uses these)
 FEAST_REGISTRY = "{{config_root}}/feast-data/registry.db"
 FEAST_REDIS = "localhost:6379"
+# Pin uv to use mise-managed Python (prevents uv from picking up its own 3.14)
+UV_PYTHON = "3.12"
 
 # ── Tasks ──
 
