@@ -16,8 +16,8 @@ jobs:
   ruff:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
       - run: uvx ruff check .
       - run: uvx ruff format --check .
 
@@ -29,8 +29,8 @@ jobs:
       matrix:
         project: [training, promotion, serving, features]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
       - name: Sync ${{ matrix.project }} venv
         run: uv sync
         working-directory: ${{ matrix.project }}
@@ -50,8 +50,8 @@ jobs:
       matrix:
         project: [training, promotion, serving, features]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
       - name: Run tests for ${{ matrix.project }}
         run: uv run --group dev pytest tests/ -v
         working-directory: ${{ matrix.project }}
@@ -63,7 +63,7 @@ jobs:
       run:
         working-directory: ui
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -86,7 +86,7 @@ jobs:
           - name: airflow
             file: airflow/Dockerfile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
       - name: Build ${{ matrix.name }}
         uses: docker/build-push-action@v6
@@ -101,6 +101,6 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
       - run: uvx --with mkdocs-material mkdocs build --strict
