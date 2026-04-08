@@ -61,6 +61,9 @@ docker compose up serving    # port 8000 + Ray dashboard on 8265
 
 Interactive docs at `http://localhost:8000/docs`.
 
+A [Bruno](https://www.usebruno.com/) API collection is included at the repo root in `bruno/` with
+pre-filled requests for every endpoint.
+
 ## Configuration
 
 | Variable | Default | Description |

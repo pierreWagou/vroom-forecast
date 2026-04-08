@@ -164,6 +164,7 @@ def promote(
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for the promotion pipeline."""
     parser = argparse.ArgumentParser(description="Promote a model version to champion")
     parser.add_argument(
         "--version",

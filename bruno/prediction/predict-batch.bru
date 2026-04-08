@@ -1,0 +1,31 @@
+meta {
+  name: Predict Batch
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/predict/batch
+  body: json
+}
+
+body:json {
+  [
+    {
+      "technology": 1,
+      "actual_price": 45.0,
+      "recommended_price": 50.0,
+      "num_images": 8,
+      "street_parked": 0,
+      "description": 250
+    },
+    {
+      "technology": 0,
+      "actual_price": 30.0,
+      "recommended_price": 25.0,
+      "num_images": 2,
+      "street_parked": 1,
+      "description": 50
+    }
+  ]
+}

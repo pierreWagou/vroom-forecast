@@ -41,6 +41,24 @@ mise run dev
 The UI is at [localhost:3000](http://localhost:3000). Trigger the ML pipeline
 from Airflow at [localhost:8080](http://localhost:8080) (credentials: `admin` / `admin`).
 
+### Quick Test
+
+Once services are running and the pipeline has completed (`mise run pipeline` or
+trigger from Airflow):
+
+```bash
+curl -s -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"technology":1,"actual_price":45,"recommended_price":50,"num_images":8,"street_parked":0,"description":250}'
+```
+
+```json
+{"predicted_reservations": 4.12, "model_version": "1"}
+```
+
+Interactive docs at [localhost:8000/docs](http://localhost:8000/docs).
+A [Bruno](https://www.usebruno.com/) API collection is included in `bruno/` — open it to hit every endpoint with pre-filled sample payloads.
+
 ## Architecture
 
 ```mermaid
@@ -302,6 +320,36 @@ meaning more consistent response times — fewer outlier predictions.
 | Multiple Predictor replicas | Linear throughput scaling |
 | GPU-based model (XGBoost, neural net) | Leverage Ray Serve's GPU-aware scheduling |
 | More complex features (aggregations, embeddings) | Online store path becomes significantly faster than on-the-fly |
+
+## Design Decisions
+
+- **RandomForest over XGBoost/LightGBM** — The dataset is small (~500 vehicles) and the feature set simple. RF achieves CV MAE 3.44 with zero tuning; gradient boosting adds complexity and overfitting risk for marginal gain. Easy to swap later — the pipeline is model-agnostic.
+
+- **Ray Serve over plain FastAPI/Gunicorn** — Turo lists Ray as a high-priority technology. Ray Serve's deployment composition lets us scale the Predictor, FeatureLookup, and FeatureMaterializer independently. For a single-model demo this is over-engineered — but it demonstrates the pattern Turo would use at scale.
+
+- **Feast over a raw Redis client** — Feast gives us a unified offline/online store abstraction with point-in-time correctness for training. A raw Redis client would be simpler for serving alone, but wouldn't solve the training-serving skew problem. The tradeoff is operational complexity (registry, materialization) vs. feature consistency guarantees.
+
+- **5 features, not 8** — The exploration notebook tested all combinations. `price_diff` alone captures the pricing signal better than separate `actual_price` + `recommended_price` (which are collinear). `price_ratio` is 91% correlated with `price_diff` — adding it doesn't improve the model but does add a feature to maintain.
+
+- **Parquet offline + Redis online** — Training needs all historical vehicles (batch access pattern). Serving needs individual vehicle lookup (point access pattern). Parquet is fast for batch reads; Redis is fast for point lookups. A single store can't serve both patterns well.
+
+- **Separate sub-projects with independent venvs** — Each pipeline stage (features, training, promotion, serving) has its own `pyproject.toml` and `.venv`. This mirrors how Turo's MLOps team would structure production code: Airflow shouldn't need scikit-learn, and the serving container shouldn't ship pandas. The tradeoff is duplicated `FEATURE_COLS` definitions across projects — acceptable for isolation.
+
+- **Champion/challenger promotion over auto-deploy** — Every model version gets the `candidate` alias first and must beat the current `champion` on CV MAE before being promoted. This prevents regressions from reaching production. The tradeoff is latency (one extra step) vs. safety.
+
+- **Redis pub/sub for model reload** — When a new champion is promoted, the serving layer needs to know. Polling MLflow works but adds latency. Redis pub/sub gives instant notification with zero-downtime reload. The serving layer already depends on Redis (Feast online store), so this adds no new infrastructure.
+
+## Production Considerations
+
+This is a demo — here's what would change for production:
+
+- **Security** — CORS is `allow_origins=["*"]` and Airflow uses hardcoded `admin`/`admin`. In production: restrict CORS origins, use a secrets manager (Vault, AWS Secrets Manager) for credentials, and add authentication middleware to the API.
+
+- **Data quality & drift** — Pydantic validates input schemas, but there's no monitoring for feature distribution drift between training and serving. In production: add Evidently or Great Expectations to detect training-serving skew and trigger retraining when distributions shift.
+
+- **Retraining triggers** — The pipeline runs on a daily schedule. In production, retraining should also be triggered by data drift detection, model performance degradation (monitor prediction accuracy against actuals), or significant new vehicle volume.
+
+- **Observability** — The stack includes Ray Dashboard, MLflow UI, and Redis Insight for development. In production: add structured logging (JSON), Prometheus metrics (request latency, prediction distribution, feature store hit rates), and alerting on model staleness or serving errors.
 
 ## Agent-Enabled Repository
 

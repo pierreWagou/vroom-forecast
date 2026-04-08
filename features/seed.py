@@ -88,6 +88,7 @@ def seed(data_dir: Path, db_path: str) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for the database seeding script."""
     parser = argparse.ArgumentParser(description="Seed the database from CSVs")
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
     parser.add_argument("--db", type=str, default=DB_PATH)

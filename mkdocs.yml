@@ -1,8 +1,8 @@
 site_name: Vroom Forecast
 site_description: ML pipeline predicting vehicle reservations — Staff MLOps take-home for Turo
-site_url: https://wagou.github.io/vroom-forecast/
-repo_url: https://github.com/wagou/vroom-forecast
-repo_name: wagou/vroom-forecast
+site_url: https://pierreWagou.github.io/vroom-forecast/
+repo_url: https://github.com/pierreWagou/vroom-forecast
+repo_name: pierreWagou/vroom-forecast
 
 theme:
   name: material

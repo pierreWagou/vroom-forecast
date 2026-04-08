@@ -1,0 +1,24 @@
+meta {
+  name: Benchmark (Raw Features)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/benchmark
+  body: json
+}
+
+body:json {
+  {
+    "n_iterations": 100,
+    "vehicle": {
+      "technology": 1,
+      "actual_price": 45.0,
+      "recommended_price": 50.0,
+      "num_images": 8,
+      "street_parked": 0,
+      "description": 250
+    }
+  }
+}

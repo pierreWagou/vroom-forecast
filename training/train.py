@@ -172,6 +172,7 @@ def run(
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for the training pipeline."""
     parser = argparse.ArgumentParser(description="Vroom Forecast training pipeline")
     parser.add_argument(
         "--feature-store",

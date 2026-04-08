@@ -1,0 +1,21 @@
+meta {
+  name: Save Vehicle
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/vehicles
+  body: json
+}
+
+body:json {
+  {
+    "technology": 1,
+    "actual_price": 55.0,
+    "recommended_price": 50.0,
+    "num_images": 10,
+    "street_parked": 0,
+    "description": 300
+  }
+}

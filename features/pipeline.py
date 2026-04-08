@@ -138,6 +138,7 @@ def run(db_path: str, feast_repo: str, parquet_path: str) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for the feature pipeline."""
     parser = argparse.ArgumentParser(description="Run the feature pipeline")
     parser.add_argument("--db", type=str, default=DB_PATH, help="Path to SQLite database")
     parser.add_argument(

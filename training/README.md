@@ -21,6 +21,15 @@ uv run --project training python -m training \
     --mlflow-uri http://localhost:5001
 ```
 
+### CLI options
+
+| Flag | Default | Description |
+|---|---|---|
+| `--feature-store` | *(required)* | Path to offline store Parquet file |
+| `--mlflow-uri` | `http://localhost:5001` | MLflow tracking server URI |
+| `--experiment` | `vroom-forecast` | MLflow experiment name |
+| `--model-name` | `vroom-forecast` | Registered model name |
+
 ## What it does
 
 1. Loads features from the offline store (Parquet file written by the feature pipeline)

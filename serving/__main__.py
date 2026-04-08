@@ -18,6 +18,7 @@ from serving.model import (
 
 
 def main() -> None:
+    """Initialize Ray, compose Serve deployments, and start background actors."""
     ray.init(
         ignore_reinit_error=True,
         dashboard_host="0.0.0.0",

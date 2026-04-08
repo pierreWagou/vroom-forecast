@@ -40,6 +40,7 @@ export interface BenchmarkResponse {
   avg_predict_ms: number;
 }
 
+/** Predict reservations from raw vehicle features (on-the-fly computation). */
 export async function predict(vehicle: VehicleFeatures): Promise<PredictionResponse> {
   const res = await fetch(`${API_URL}/predict`, {
     method: "POST",
@@ -50,6 +51,7 @@ export async function predict(vehicle: VehicleFeatures): Promise<PredictionRespo
   return res.json();
 }
 
+/** Check API health, model status, and feature store availability. */
 export async function fetchHealth(): Promise<HealthResponse> {
   const res = await fetch(`${API_URL}/health`);
   if (!res.ok) throw new Error(`Health check failed: ${res.statusText}`);
@@ -81,12 +83,14 @@ export interface StoreInfo {
   };
 }
 
+/** Fetch operational info about offline (Parquet) and online (Redis) stores. */
 export async function fetchStoreInfo(): Promise<StoreInfo> {
   const res = await fetch(`${API_URL}/stores`);
   if (!res.ok) throw new Error(`Failed to fetch store info: ${res.statusText}`);
   return res.json();
 }
 
+/** Benchmark latency using raw features (on-the-fly computation path). */
 export async function benchmark(
   vehicle: VehicleFeatures,
   nIterations: number
@@ -100,6 +104,7 @@ export async function benchmark(
   return res.json();
 }
 
+/** Benchmark latency using the online store (Feast/Redis lookup path). */
 export async function benchmarkById(
   vehicleId: number,
   nIterations: number
@@ -113,6 +118,7 @@ export async function benchmarkById(
   return res.json();
 }
 
+/** Hot-reload the champion model from MLflow without downtime. */
 export async function reloadModel(): Promise<ReloadResponse> {
   const res = await fetch(`${API_URL}/reload`, {
     method: "POST",
@@ -139,6 +145,7 @@ export interface VehicleRecord {
   num_reservations: number | null;
 }
 
+/** Save a new vehicle to the catalog and trigger feature materialization. */
 export async function saveVehicle(vehicle: VehicleFeatures): Promise<SaveVehicleResponse> {
   const res = await fetch(`${API_URL}/vehicles`, {
     method: "POST",
@@ -149,12 +156,14 @@ export async function saveVehicle(vehicle: VehicleFeatures): Promise<SaveVehicle
   return res.json();
 }
 
+/** List all vehicles (fleet + new arrivals) with reservation counts. */
 export async function listVehicles(): Promise<VehicleRecord[]> {
   const res = await fetch(`${API_URL}/vehicles`);
   if (!res.ok) throw new Error(`Failed to list vehicles: ${res.statusText}`);
   return res.json();
 }
 
+/** Delete a new-arrival vehicle from the catalog. */
 export async function deleteVehicle(vehicleId: number): Promise<void> {
   const res = await fetch(`${API_URL}/vehicles/${vehicleId}`, {
     method: "DELETE",
@@ -162,6 +171,7 @@ export async function deleteVehicle(vehicleId: number): Promise<void> {
   if (!res.ok) throw new Error(`Failed to delete vehicle: ${res.statusText}`);
 }
 
+/** Predict reservations for a vehicle by ID using online store features. */
 export async function predictById(vehicleId: number): Promise<PredictionResponse> {
   const res = await fetch(`${API_URL}/predict/id`, {
     method: "POST",
@@ -187,12 +197,14 @@ export interface ComputedFeatures {
   store: "offline" | "online" | "none";
 }
 
+/** Fetch computed features for a single vehicle (offline store, then online fallback). */
 export async function fetchVehicleFeatures(vehicleId: number): Promise<ComputedFeatures> {
   const res = await fetch(`${API_URL}/vehicles/${vehicleId}/features`);
   if (!res.ok) throw new Error(`Failed to fetch features: ${res.statusText}`);
   return res.json();
 }
 
+/** Fetch computed features for all vehicles in a single batch call. */
 export async function fetchAllVehicleFeatures(): Promise<ComputedFeatures[]> {
   const res = await fetch(`${API_URL}/vehicles/features`);
   if (!res.ok) throw new Error(`Failed to fetch features: ${res.statusText}`);

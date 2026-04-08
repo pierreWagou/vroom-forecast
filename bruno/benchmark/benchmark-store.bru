@@ -1,0 +1,17 @@
+meta {
+  name: Benchmark by ID (Online Store)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/benchmark/id
+  body: json
+}
+
+body:json {
+  {
+    "n_iterations": 100,
+    "vehicle_id": 1
+  }
+}

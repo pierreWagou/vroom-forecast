@@ -167,6 +167,7 @@ export default function Home() {
     };
   }, [mounted]);
 
+  /** Reload the champion model from MLflow and refresh health status. */
   const handleReload = async () => {
     setReloading(true);
     setError(null);
@@ -182,6 +183,7 @@ export default function Home() {
     }
   };
 
+  /** Run a single prediction from the vehicle form inputs. */
   const handlePredict = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -195,6 +197,7 @@ export default function Home() {
     }
   }, [vehicle]);
 
+  /** Benchmark latency using raw features (on-the-fly computation path). */
   const handleBenchmark = async () => {
     setBenchLoading(true);
     setBenchProgress(0);
@@ -218,6 +221,7 @@ export default function Home() {
     }
   };
 
+  /** Benchmark latency using the online store (Feast/Redis lookup path). */
   const handleBenchmarkStore = async () => {
     const vid = Number(benchVehicleId);
     if (!vid || vid <= 0) {
@@ -246,9 +250,11 @@ export default function Home() {
     }
   };
 
+  /** Update a single field in the vehicle form state. */
   const update = (field: keyof VehicleFeatures, value: number) =>
     setVehicle((prev) => ({ ...prev, [field]: value }));
 
+  /** Save the current vehicle form to the catalog and trigger materialization. */
   const handleSaveVehicle = async () => {
     setSaving(true);
     setError(null);
@@ -268,6 +274,7 @@ export default function Home() {
     }
   };
 
+  /** Predict reservations for a single vehicle using online store features. */
   const handlePredictById = async (vehicleId: number) => {
     setError(null);
     try {
@@ -290,6 +297,7 @@ export default function Home() {
     }
   };
 
+  /** Predict reservations for all new arrivals in parallel. */
   const handlePredictAll = async () => {
     setError(null);
     const arrivals = savedVehicles.filter((v) => v.num_reservations === null);
@@ -306,6 +314,7 @@ export default function Home() {
     setVehiclePredictions((prev) => ({ ...prev, ...newPredictions }));
   };
 
+  /** Delete a new-arrival vehicle from the catalog. */
   const handleDeleteVehicle = async (vehicleId: number) => {
     setError(null);
     try {
@@ -316,6 +325,7 @@ export default function Home() {
     }
   };
 
+  /** Fetch all vehicles and their computed features from the API. */
   const refreshVehicles = useCallback(async () => {
     try {
       const vehicles = await listVehicles();
@@ -429,17 +439,19 @@ export default function Home() {
             {/* Model status + reload */}
             <div className="flex items-center gap-2">
               <Tooltip>
-                <TooltipTrigger>
-                  <div className="flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 text-sm backdrop-blur-sm cursor-default">
-                    <StatusDot online={!!health} />
-                    {health ? (
-                      <span>
-                        Model v{health.model_version}
-                      </span>
-                    ) : (
-                      <span className="text-white/60">Offline</span>
-                    )}
-                  </div>
+                <TooltipTrigger
+                  render={
+                    <div className="flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 text-sm backdrop-blur-sm cursor-default" />
+                  }
+                >
+                  <StatusDot online={!!health} />
+                  {health ? (
+                    <span>
+                      Model v{health.model_version}
+                    </span>
+                  ) : (
+                    <span className="text-white/60">Offline</span>
+                  )}
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
                   {health
@@ -449,16 +461,18 @@ export default function Home() {
               </Tooltip>
 
               <Tooltip>
-                <TooltipTrigger>
-                  <button
-                    type="button"
-                    aria-label="Reload champion model from MLflow"
-                    onClick={reloading || !health ? undefined : handleReload}
-                    disabled={reloading || !health}
-                    className={`flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors ${reloading || !health ? "opacity-50 cursor-not-allowed" : "hover:bg-white/25 cursor-pointer"}`}
-                  >
-                    <RefreshCw className={`h-4 w-4 ${reloading ? "animate-spin" : ""}`} />
-                  </button>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="Reload champion model from MLflow"
+                      onClick={reloading || !health ? undefined : handleReload}
+                      disabled={!mounted || reloading || !health || undefined}
+                      className={`flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors ${!mounted || reloading || !health ? "opacity-50 cursor-not-allowed" : "hover:bg-white/25 cursor-pointer"}`}
+                    />
+                  }
+                >
+                  <RefreshCw className={`h-4 w-4 ${reloading ? "animate-spin" : ""}`} />
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
                   Reload champion model from MLflow
@@ -466,16 +480,18 @@ export default function Home() {
               </Tooltip>
 
               <Tooltip>
-                <TooltipTrigger>
-                  <a
-                    href="http://localhost:8100"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="Documentation (opens in new tab)"
-                    className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors hover:bg-white/25"
-                  >
-                    <BookOpen className="h-4 w-4" />
-                  </a>
+                <TooltipTrigger
+                  render={
+                    <a
+                      href="http://localhost:8100"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Documentation (opens in new tab)"
+                      className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors hover:bg-white/25"
+                    />
+                  }
+                >
+                  <BookOpen className="h-4 w-4" />
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
                   Documentation
@@ -483,19 +499,21 @@ export default function Home() {
               </Tooltip>
 
               <Tooltip>
-                <TooltipTrigger>
-                  <button
-                    type="button"
-                    aria-label={mounted && resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-                    onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-                    className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors hover:bg-white/25 cursor-pointer"
-                  >
-                    {mounted && resolvedTheme === "dark" ? (
-                      <Sun className="h-4 w-4" />
-                    ) : (
-                      <Moon className="h-4 w-4" />
-                    )}
-                  </button>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label={mounted && resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                      onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+                      className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors hover:bg-white/25 cursor-pointer"
+                    />
+                  }
+                >
+                  {mounted && resolvedTheme === "dark" ? (
+                    <Sun className="h-4 w-4" />
+                  ) : (
+                    <Moon className="h-4 w-4" />
+                  )}
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
                   {mounted && resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
@@ -738,16 +756,18 @@ export default function Home() {
                       )}
                     </Button>
                     <Tooltip>
-                      <TooltipTrigger>
-                        <button
-                          type="button"
-                          aria-label="Save vehicle to catalog"
-                          onClick={saving || !health ? undefined : handleSaveVehicle}
-                          disabled={saving || !health}
-                          className={`flex h-11 w-11 items-center justify-center rounded-full border ${saving || !health ? "opacity-50 cursor-not-allowed" : "hover:bg-muted cursor-pointer"}`}
-                        >
-                          <Save className={`h-5 w-5 ${saving ? "animate-pulse" : ""}`} />
-                        </button>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-label="Save vehicle to catalog"
+                            onClick={saving || !health ? undefined : handleSaveVehicle}
+                            disabled={!mounted || saving || !health || undefined}
+                            className={`flex h-11 w-11 items-center justify-center rounded-full border ${!mounted || saving || !health ? "opacity-50 cursor-not-allowed" : "hover:bg-muted cursor-pointer"}`}
+                          />
+                        }
+                      >
+                        <Save className={`h-5 w-5 ${saving ? "animate-pulse" : ""}`} />
                       </TooltipTrigger>
                       <TooltipContent>Save to catalog</TooltipContent>
                     </Tooltip>

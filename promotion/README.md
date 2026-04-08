@@ -19,6 +19,17 @@ uv run --project promotion python -m promotion \
     --redis-url redis://localhost:6379
 ```
 
+### CLI options
+
+| Flag | Default | Description |
+|---|---|---|
+| `--version` | *(none)* | Explicit model version (otherwise resolves from `--candidate-alias`) |
+| `--candidate-alias` | `candidate` | MLflow alias to resolve candidate from |
+| `--mlflow-uri` | `http://localhost:5001` | MLflow tracking server URI |
+| `--model-name` | `vroom-forecast` | Registered model name |
+| `--metric` | `cv_mae_mean` | Metric to compare (lower is better) |
+| `--redis-url` | *(none)* | Redis URL for promotion notification |
+
 ## What it does
 
 1. Resolves the candidate version (by explicit `--version` or `candidate` alias)
@@ -31,5 +42,5 @@ uv run --project promotion python -m promotion \
 ## Key files
 
 - `promote.py` — Promotion logic, Redis notification, CLI arg parsing
-- `__main__.py` — CLI entry point (always exits 0; prints `promoted` or `retained`)
+- `__main__.py` — CLI entry point (exits 0 on success; exits 1 on exception)
 - `pyproject.toml` — Dependencies: mlflow, redis

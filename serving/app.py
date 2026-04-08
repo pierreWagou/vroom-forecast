@@ -28,6 +28,7 @@ from serving.schemas import (
     BenchmarkResponse,
     ComputedFeatures,
     DeleteVehicleResponse,
+    FeatureViewInfo,
     HealthResponse,
     PredictionResponse,
     ReloadResponse,
@@ -66,6 +67,7 @@ class VroomForecastApp:
         feature_lookup: DeploymentHandle,
         offline_reader: DeploymentHandle,
     ) -> None:
+        """Store handles to all downstream Ray Serve deployments."""
         self.predictor = predictor
         self.feature_computer = feature_computer
         self.feature_lookup = feature_lookup
@@ -73,6 +75,7 @@ class VroomForecastApp:
 
     @app.get("/health", response_model=HealthResponse)
     async def health(self) -> HealthResponse:
+        """Check API health, model status, and feature store availability."""
         is_loaded = await self.predictor.is_loaded.remote()
         if not is_loaded:
             raise HTTPException(status_code=503, detail="Model not loaded")
@@ -89,6 +92,7 @@ class VroomForecastApp:
 
     @app.post("/reload", response_model=ReloadResponse)
     async def reload_model(self) -> ReloadResponse:
+        """Hot-reload the champion model from MLflow without downtime."""
         previous, current = await self.predictor.reload.remote()
         return ReloadResponse(
             status="reloaded" if current != previous else "unchanged",
@@ -149,7 +153,18 @@ class VroomForecastApp:
         return StoreInfoResponse(
             offline_store=offline_info,
             online_store=online_info,
+            feature_view=await self._get_feature_view_info(),
         )
+
+    async def _get_feature_view_info(self) -> FeatureViewInfo:
+        """Read the feature view definition from Feast, falling back to defaults."""
+        try:
+            info = await self.feature_lookup.get_feature_view_info.remote()
+            if info is not None:
+                return FeatureViewInfo(**info)
+        except Exception:
+            pass
+        return FeatureViewInfo()
 
     @app.get("/events")
     async def events(self) -> StreamingResponse:
@@ -255,6 +270,7 @@ class VroomForecastApp:
 
     @app.post("/vehicles", response_model=SaveVehicleResponse)
     async def save_vehicle_endpoint(self, vehicle: VehicleFeatures) -> SaveVehicleResponse:
+        """Persist a new vehicle to SQLite and publish a materialization event."""
         vehicle_id, event_published = await asyncio.to_thread(save_vehicle, vehicle)
         return SaveVehicleResponse(
             vehicle_id=vehicle_id, status="saved", event_published=event_published
@@ -273,6 +289,7 @@ class VroomForecastApp:
 
     @app.get("/vehicles", response_model=list[VehicleRecord])
     async def list_vehicles_endpoint(self) -> list[VehicleRecord]:
+        """List all vehicles from SQLite with reservation counts."""
         return await asyncio.to_thread(list_vehicles)
 
     @app.get("/vehicles/features", response_model=list[ComputedFeatures])
@@ -388,6 +405,7 @@ class VroomForecastApp:
 
     @app.post("/predict", response_model=PredictionResponse)
     async def predict_single(self, vehicle: VehicleFeatures) -> PredictionResponse:
+        """Predict reservations from raw vehicle features (on-the-fly computation)."""
         is_loaded = await self.predictor.is_loaded.remote()
         if not is_loaded:
             raise HTTPException(
@@ -403,6 +421,7 @@ class VroomForecastApp:
 
     @app.post("/predict/id", response_model=PredictionResponse)
     async def predict_by_id(self, req: VehicleIdRequest) -> PredictionResponse:
+        """Predict reservations using pre-computed features from the online store."""
         is_loaded = await self.predictor.is_loaded.remote()
         if not is_loaded:
             raise HTTPException(
@@ -426,6 +445,7 @@ class VroomForecastApp:
 
     @app.post("/predict/batch", response_model=BatchPredictionResponse)
     async def predict_batch(self, vehicles: list[VehicleFeatures]) -> BatchPredictionResponse:
+        """Predict reservations for up to 1000 vehicles in a single request."""
         is_loaded = await self.predictor.is_loaded.remote()
         if not is_loaded:
             raise HTTPException(

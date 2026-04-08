@@ -1,0 +1,21 @@
+meta {
+  name: Predict (Raw Features)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/predict
+  body: json
+}
+
+body:json {
+  {
+    "technology": 1,
+    "actual_price": 45.0,
+    "recommended_price": 50.0,
+    "num_images": 8,
+    "street_parked": 0,
+    "description": 250
+  }
+}

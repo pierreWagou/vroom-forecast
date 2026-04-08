@@ -1,0 +1,16 @@
+meta {
+  name: Predict by ID (Online Store)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/predict/id
+  body: json
+}
+
+body:json {
+  {
+    "vehicle_id": 1
+  }
+}

@@ -43,11 +43,13 @@ class Predictor:
     """
 
     def __init__(self) -> None:
+        """Load the champion model from MLflow on deployment startup."""
         self.model: Any = None
         self.model_version: str = ""
         self._load_champion()
 
     def _load_champion(self) -> None:
+        """Fetch and load the champion model version from MLflow."""
         mlflow.set_tracking_uri(settings.mlflow_uri)
         client = mlflow.MlflowClient()
 
@@ -101,9 +103,11 @@ class Predictor:
         return previous, self.model_version
 
     def get_version(self) -> str:
+        """Return the currently loaded model version string."""
         return self.model_version
 
     def is_loaded(self) -> bool:
+        """Return True if a model is loaded and ready for inference."""
         return self.model is not None
 
 
@@ -141,10 +145,12 @@ class FeatureLookup:
     """
 
     def __init__(self) -> None:
+        """Initialize the Feast online store connection."""
         self._store: Any = None
         self._init_feast()
 
     def _init_feast(self) -> None:
+        """Connect to the Feast feature store using the configured repo path."""
         if settings.feast_repo is None:
             logger.info("No SERVING_FEAST_REPO configured — online store disabled.")
             return
@@ -192,7 +198,31 @@ class FeatureLookup:
         return latencies
 
     def is_available(self) -> bool:
+        """Return True if the Feast online store is connected."""
         return self._store is not None
+
+    def get_feature_view_info(self) -> dict | None:
+        """Read the feature view definition from the Feast registry."""
+        if self._store is None:
+            return None
+        try:
+            fv = self._store.get_feature_view("vehicle_features")
+            entity = fv.entities[0] if fv.entities else "unknown"
+            schema_fields = [f.name for f in fv.schema]
+            # Separate features from label (num_reservations is the label)
+            label = "num_reservations"
+            features = [f for f in schema_fields if f != label]
+            ttl_days = fv.ttl.days if fv.ttl else None
+            return {
+                "name": fv.name,
+                "entity": entity,
+                "entity_key": "vehicle_id",
+                "features": features,
+                "label": label,
+                "ttl_days": ttl_days,
+            }
+        except Exception:
+            return None
 
 
 @serve.deployment
@@ -205,10 +235,12 @@ class OfflineFeatureReader:
     """
 
     def __init__(self) -> None:
+        """Load the offline store Parquet file into memory."""
         self._df: pd.DataFrame | None = None
         self._load()
 
     def _load(self) -> None:
+        """Read the Parquet file from the configured path and index by vehicle_id."""
         from pathlib import Path
 
         path = settings.offline_store_path
@@ -242,6 +274,7 @@ class OfflineFeatureReader:
         return self._df.loc[mask].reset_index()
 
     def is_available(self) -> bool:
+        """Return True if the offline store Parquet file is loaded."""
         return self._df is not None
 
 
@@ -255,6 +288,7 @@ class ModelReloadListener:
     """
 
     def __init__(self, predictor_handle: Any) -> None:
+        """Store the Predictor handle for reload calls."""
         self._predictor = predictor_handle
 
     def run(self) -> None:
@@ -291,11 +325,13 @@ class FeatureMaterializer:
     """
 
     def __init__(self) -> None:
+        """Initialize the Feast store for writing to the online store."""
         self._store: Any = None
         self._redis_url = settings.redis_url
         self._init_feast()
 
     def _init_feast(self) -> None:
+        """Set up the Feast feature store and apply entity/view definitions."""
         if settings.feast_repo is None:
             logger.info("FeatureMaterializer: no Feast repo configured — disabled.")
             return
