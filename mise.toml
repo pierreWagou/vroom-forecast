@@ -53,10 +53,6 @@ echo "Done! Run 'mise run dev' to start all services."
 description = "Start all services (Docker + UI + Jupyter + Docs)"
 run = "mprocs"
 
-[tasks.docker]
-description = "Start Docker services only (MLflow, Redis, Airflow, Ray Serve)"
-run = "docker compose up --build"
-
 [tasks.test]
 description = "Run all tests across sub-projects"
 run = """
