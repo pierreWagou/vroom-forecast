@@ -1,5 +1,16 @@
 # Vroom Forecast
 
+[![CI](https://github.com/pierreWagou/vroom-forecast/actions/workflows/ci.yml/badge.svg)](https://github.com/pierreWagou/vroom-forecast/actions/workflows/ci.yml)
+[![Docs](https://github.com/pierreWagou/vroom-forecast/actions/workflows/cd-docs.yml/badge.svg)](https://github.com/pierreWagou/vroom-forecast/actions/workflows/cd-docs.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
+![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
+![Ray Serve](https://img.shields.io/badge/Ray_Serve-028CF0?logo=ray&logoColor=white)
+![Airflow](https://img.shields.io/badge/Airflow-017CEE?logo=apacheairflow&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-000000?logo=next.js&logoColor=white)
+
 ML pipeline that predicts the number of reservations a vehicle will receive
 based on its listing attributes. Built as a take-home project for a
 **Staff MLOps Engineer** position at Turo.
