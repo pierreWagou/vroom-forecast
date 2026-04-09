@@ -172,11 +172,9 @@ class Predictor:
         if settings.redis_url is None:
             return
         try:
-            import json
+            import redis
 
-            import redis as redis_lib
-
-            r = redis_lib.from_url(settings.redis_url)
+            r = redis.from_url(settings.redis_url)
             payload = json.dumps(
                 {
                     "type": "model-reloaded",
@@ -493,10 +491,10 @@ class FeatureMaterializer:
 
         # Notify listeners (UI SSE) that this vehicle is now materialized
         if self._redis_url:
-            import redis as redis_lib
+            import redis
 
             try:
-                r = redis_lib.from_url(self._redis_url)
+                r = redis.from_url(self._redis_url)
                 try:
                     r.publish(
                         VEHICLE_MATERIALIZED_CHANNEL,

@@ -7,20 +7,22 @@ definitions. No ML dependencies — pipelines run via `BashOperator` + `uv run`.
 
 ```mermaid
 graph LR
-    subgraph "Materialize (daily 01:00)"
+    subgraph "Materialize (schedule=None, manual)"
         S[seed] --> M[materialize]
     end
 
-    subgraph "Training (on fresh features)"
-        T[train] --> TP[trigger_promotion]
+    subgraph "Training (schedule=None, manual)"
+        T[train]
     end
 
-    subgraph "Promotion (event-driven)"
+    subgraph "Promotion (schedule=None, manual)"
         P[promote]
     end
 
-    M -->|Dataset: features ready| T
-    TP -->|TriggerDagRunOperator| P
+    subgraph "Pipeline (schedule=None, orchestrator)"
+        TT[trigger_training] --> TP[trigger_promotion]
+    end
+
     P -.->|Redis pub/sub| SRV[Serving reloads model]
 ```
 
@@ -107,6 +109,7 @@ uv creates an isolated venv inside the container on first run.
 - `dags/vroom_forecast_materialize.py` — Feature materialization DAG
 - `dags/vroom_forecast_training.py` — Training DAG
 - `dags/vroom_forecast_promotion.py` — Promotion DAG
+- `dags/vroom_forecast_pipeline.py` — Pipeline orchestrator DAG
 
 ## Credentials
 

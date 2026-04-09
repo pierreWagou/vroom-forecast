@@ -17,7 +17,7 @@ both training and serving.
 
 - Feature definitions in `feature_repo/definitions.py` are the single source of truth
 - Training and serving MUST use features from this store — no local feature engineering
-- The feature pipeline computes derived features (price_diff, price_ratio) once
+- The feature pipeline computes derived features (price_diff) once
 - The batch pipeline writes to Parquet (all vehicles) and Redis (new arrivals only via `write_to_online_store`)
 - The real-time FeatureMaterializer (in serving) writes individual vehicles to Redis on save
 - `num_reservations` is nullable: NULL for new arrivals (no observation), int for fleet (observed count, including 0)

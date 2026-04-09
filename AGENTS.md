@@ -10,7 +10,7 @@ Tool versions and tasks are managed by [mise](https://mise.jdx.dev/) via `mise.t
 - **Bootstrap:** `mise run setup` (syncs all sub-project deps + pre-commit hooks)
 - **Run all services:** `mise run dev` (mprocs: Docker, UI, Jupyter, Docs)
 - **Full CI check:** `mise run check` — runs pre-commit (ruff, ty, eslint, tsc, pytest)
-- **Local ML pipeline:** `mise run pipeline` (seed → train → promote, no Airflow)
+- **Local ML pipeline:** `mise run pipeline` (seed → materialize → train → promote, no Airflow)
 
 Each Python sub-project has its own `.venv`, `uv.lock`, `pyproject.toml`.
 No root venv — dev tools run via `uvx`. The UI is a standalone npm project.

@@ -29,6 +29,10 @@ when the serving container is running.
 | `GET` | `/vehicles/features` | Batch: get features for all vehicles |
 | `GET` | `/vehicles/{id}/features` | Get computed features for one vehicle |
 | `GET` | `/stores` | Operational info about offline and online stores |
+| `GET` | `/model` | Champion model metadata (version, metrics, feature importances) |
+| `POST` | `/materialize` | Trigger the Airflow materialization pipeline |
+| `POST` | `/train` | Trigger the end-to-end ML pipeline (training + promotion) |
+| `GET` | `/pipelines/{dag_id}/{dag_run_id}` | Poll Airflow DAG run status |
 | `GET` | `/events` | SSE stream for model promotion events |
 | `GET` | `/vehicles/events` | SSE stream for vehicle materialization events |
 

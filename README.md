@@ -118,9 +118,10 @@ graph TB
 | `mise run dev` | Start all services (mprocs: Docker, UI, Jupyter, Docs) |
 | `mise run check` | Full CI check: lint + type check + tests (pre-commit) |
 | `mise run seed` | Seed DB + materialize features (local, no Airflow) |
+| `mise run materialize` | Compute and materialize features to Parquet + Redis |
 | `mise run train` | Train a model locally |
 | `mise run promote` | Run champion/challenger promotion locally |
-| `mise run pipeline` | Full ML pipeline: seed → train → promote |
+| `mise run pipeline` | Full ML pipeline: seed → materialize → train → promote |
 
 ## Services
 

@@ -51,6 +51,10 @@ feature lookup, model inference, and feature materialization.
 | `GET` | `/vehicles/features` | Batch: features for all vehicles |
 | `GET` | `/vehicles/{id}/features` | Features for one vehicle |
 | `GET` | `/stores` | Offline/online store operational info |
+| `GET` | `/model` | Champion model metadata (version, metrics, feature importances) |
+| `POST` | `/materialize` | Trigger the Airflow materialization pipeline |
+| `POST` | `/train` | Trigger the end-to-end ML pipeline (training + promotion) |
+| `GET` | `/pipelines/{dag_id}/{dag_run_id}` | Poll Airflow DAG run status |
 | `GET` | `/events` | SSE stream for model promotion events |
 | `GET` | `/vehicles/events` | SSE stream for vehicle materialization events |
 
@@ -68,6 +72,7 @@ Env vars with `SERVING_` prefix (pydantic-settings):
 | `SERVING_REDIS_URL` | None | Redis connection URL |
 | `SERVING_DB_PATH` | `/feast-data/vehicles.db` | SQLite database path |
 | `SERVING_OFFLINE_STORE_PATH` | None | Parquet offline store |
+| `SERVING_AIRFLOW_URL` | None | Airflow REST API base URL |
 
 ## File Layout
 

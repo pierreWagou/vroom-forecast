@@ -145,7 +145,7 @@ class FeatureViewInfo(BaseModel):
     entity_key: str = "vehicle_id"
     features: list[str] = ["technology", "num_images", "street_parked", "description", "price_diff"]
     label: str = "num_reservations"
-    ttl_days: int = 365
+    ttl_days: int | None = 365
 
 
 class StoreInfoResponse(BaseModel):
@@ -160,7 +160,7 @@ class DeleteVehicleResponse(BaseModel):
     """Response for vehicle deletion."""
 
     status: str
-    vehicle_id: str
+    vehicle_id: int
 
 
 class TriggerDagResponse(BaseModel):

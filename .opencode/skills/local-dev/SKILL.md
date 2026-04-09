@@ -12,7 +12,7 @@ mise install          # Install pinned tools (Python 3.12, Node LTS, uv, mprocs)
 mise run setup        # Bootstrap all deps + pre-commit hooks
 mise run dev          # Start everything (mprocs)
 mise run check        # Full CI check: lint + type check + tests (pre-commit)
-mise run pipeline     # Full ML pipeline: seed → train → promote
+mise run pipeline     # Full ML pipeline: seed → materialize → train → promote
 ```
 
 ## Local Development
@@ -72,8 +72,11 @@ The easiest path is to use Airflow inside Docker, which handles seeding,
 materialization, training, and promotion in the correct order:
 
 ```bash
-# Trigger the full pipeline (materialize -> training -> promotion auto-chains)
+# Trigger the full pipeline (materialize features)
 docker compose exec airflow airflow dags trigger vroom_forecast_materialize
+
+# Training + promotion (pipeline orchestrator)
+docker compose exec airflow airflow dags trigger vroom_forecast_pipeline
 
 # Or trigger individual steps
 docker compose exec airflow airflow dags trigger vroom_forecast_training
@@ -90,7 +93,6 @@ Airflow credentials: `admin` / `admin`
 | `vroom_forecast_training` | Manual | Train from offline store -> register candidate |
 | `vroom_forecast_promotion` | Manual | Compare candidate vs champion -> promote |
 | `vroom_forecast_pipeline` | Manual | Orchestrator: training -> promotion (UI "Train" button) |
-| `vroom_forecast_promotion` | None (event-driven) | Compare candidate vs champion -> promote |
 
 ## Ports
 

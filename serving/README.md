@@ -36,7 +36,7 @@ graph TB
 uv run --project serving python -m serving
 
 # Docker:
-docker compose up serving    # port 8000 + Ray dashboard on 8265
+docker compose up ray-serve    # port 8000 + Ray dashboard on 8265
 ```
 
 ## Endpoints
@@ -56,6 +56,10 @@ docker compose up serving    # port 8000 + Ray dashboard on 8265
 | GET | `/vehicles/features` | Batch: get features for all vehicles (offline + online) |
 | GET | `/vehicles/{id}/features` | Get computed features for one vehicle |
 | GET | `/stores` | Operational info about offline and online stores |
+| GET | `/model` | Champion model metadata (version, metrics, feature importances) |
+| POST | `/materialize` | Trigger the Airflow materialization pipeline |
+| POST | `/train` | Trigger the end-to-end ML pipeline (training + promotion) |
+| GET | `/pipelines/{dag_id}/{dag_run_id}` | Poll Airflow DAG run status |
 | GET | `/events` | SSE stream for model promotion events |
 | GET | `/vehicles/events` | SSE stream for vehicle materialization events |
 
@@ -76,3 +80,4 @@ pre-filled requests for every endpoint.
 | `SERVING_REDIS_URL` | None | Redis URL for pub/sub + model reload |
 | `SERVING_DB_PATH` | `/feast-data/vehicles.db` | SQLite path for vehicle persistence |
 | `SERVING_OFFLINE_STORE_PATH` | None | Parquet path for offline feature store |
+| `SERVING_AIRFLOW_URL` | None | Airflow REST API base URL |

@@ -30,12 +30,11 @@ in isolated sub-project environments.
 | `vroom_forecast_training` | Manual | `train`: train from offline store, register candidate |
 | `vroom_forecast_promotion` | Manual | `promote`: compare candidate vs champion, promote if better |
 | `vroom_forecast_pipeline` | Manual | `trigger_training` -> `trigger_promotion`: orchestrator (UI "Train" button) |
-| `vroom_forecast_promotion` | Event-driven (triggered by training) | `promote`: compare candidate vs champion, promote if better, notify via Redis |
 
 ## Dependency Chaining
 
-Materialize produces an Airflow Dataset that triggers training. Training
-explicitly triggers the promotion DAG via `TriggerDagRunOperator`.
+Training explicitly triggers the promotion DAG via `TriggerDagRunOperator`.
+The pipeline DAG orchestrates training → promotion in sequence.
 
 ## File Layout
 
@@ -46,6 +45,7 @@ airflow/
     vroom_forecast_materialize.py         # Seed + materialize DAG
     vroom_forecast_training.py            # Training DAG
     vroom_forecast_promotion.py           # Promotion DAG
+    vroom_forecast_pipeline.py            # Pipeline orchestrator DAG
 ```
 
 ## Docker Build
@@ -57,8 +57,11 @@ tasks start instantly.
 ## Trigger Pipelines
 
 ```bash
-# Full pipeline (materialize -> training -> promotion auto-chains)
+# Full pipeline (materialize features)
 docker compose exec airflow airflow dags trigger vroom_forecast_materialize
+
+# Training + promotion (pipeline orchestrator)
+docker compose exec airflow airflow dags trigger vroom_forecast_pipeline
 
 # Individual steps
 docker compose exec airflow airflow dags trigger vroom_forecast_training

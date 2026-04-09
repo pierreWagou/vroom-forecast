@@ -101,16 +101,6 @@ class VroomForecastApp:
             feast_online=feast_online,
         )
 
-        version = await self.predictor.get_version.remote()
-        feast_online = await self.feature_lookup.is_available.remote()
-        return HealthResponse(
-            status="ok",
-            model_name=settings.model_name,
-            model_version=version,
-            mlflow_uri=settings.mlflow_uri,
-            feast_online=feast_online,
-        )
-
     @app.get("/model")
     async def model_info(self) -> dict:
         """Return metadata about the currently loaded champion model."""
@@ -268,12 +258,11 @@ class VroomForecastApp:
 
     @app.get("/events")
     async def events(self) -> StreamingResponse:
-        """SSE endpoint — streams model events from Redis pub/sub.
+        """SSE endpoint — streams model lifecycle events from Redis pub/sub.
 
-        Subscribes to the `model-promoted` channel which carries both
-        promotion events (from the pipeline) and reload events (from the
-        Predictor). On each event, fetches the current Predictor state
-        and emits a health-changed SSE event.
+        Subscribes to the `model-loaded` channel, which the Predictor
+        publishes to after every reload (whether triggered by promotion
+        or the reload button). Emits `health-changed` events to the UI.
 
         Purely event-driven — no polling.
         """
@@ -411,7 +400,7 @@ class VroomForecastApp:
                 status_code=404,
                 detail=f"Vehicle {vehicle_id} not found or is a fleet vehicle (cannot delete).",
             )
-        return DeleteVehicleResponse(status="deleted", vehicle_id=str(vehicle_id))
+        return DeleteVehicleResponse(status="deleted", vehicle_id=vehicle_id)
 
     @app.get("/vehicles", response_model=list[VehicleRecord])
     async def list_vehicles_endpoint(self) -> list[VehicleRecord]:
