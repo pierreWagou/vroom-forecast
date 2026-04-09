@@ -230,7 +230,11 @@ uvx pre-commit run --all-files
 **Dataset:** 1,000 vehicles, 6,376 reservations. 9% of vehicles have zero reservations.
 Average reservations per vehicle: 6.4 (median 5, std 4.9).
 
-### Top Factors (RandomForest feature importance)
+### Exploratory Analysis (8 features)
+
+The [exploration notebook](exploration/) tested all 8 raw and derived features to
+understand the dataset before selecting the production model. These importances
+are from the exploratory phase:
 
 | Rank | Feature | Importance | Correlation | Interpretation |
 |------|---------|------------|-------------|----------------|
@@ -243,25 +247,30 @@ Average reservations per vehicle: 6.4 (median 5, std 4.9).
 | 7 | **street_parked** | 2.1% | -0.017 | Minimal impact. Convenience of parking is not a major factor. |
 | 8 | **technology** | 1.5% | +0.136 | Having a tech package helps slightly, but it's the weakest predictor. |
 
-### Key Insights
+### Production Model (5 features)
 
-1. **Pricing relative to market is everything.** The two derived features (`price_diff`, `price_ratio`) together account for 47% of the model's predictive power. Hosts who price below the recommended price see dramatically more bookings.
+Based on the exploration, the production model uses 5 features:
+`technology`, `num_images`, `street_parked`, `description`, `price_diff`.
 
-2. **Listing quality matters.** Description length (17%) and number of photos (10.5%) together account for 27%. This is actionable — Turo could nudge hosts to write longer descriptions and upload more photos.
-
-3. **Absolute price is secondary to relative price.** `actual_price` alone is 12%, but the ratio/diff with `recommended_price` is 47%. A $100/day car priced at its recommended price gets more bookings than a $50/day car priced above its recommendation.
-
-4. **Parking and technology are noise.** Together they account for only 3.6% of importance. These are "nice to have" but don't drive booking decisions.
-
-### Model Performance
+Three features were dropped:
+- `actual_price` and `recommended_price` — collinear with `price_diff`, which captures the full pricing signal alone
+- `price_ratio` — 91% correlated with `price_diff`, adds no predictive value
 
 | Metric | Value |
 |--------|-------|
-| CV MAE (5-fold) | 3.45 (+/- 0.13) |
-| Model | RandomForestRegressor (200 trees, max_depth=10) |
+| CV MAE (5-fold) | 3.44 (+/- 0.50) |
+| Model | RandomForestRegressor (100 trees, no max_depth) |
 
-The model predicts reservation counts with an average error of ~3.5 reservations.
+The model predicts reservation counts with an average error of ~3.4 reservations.
 This is reasonable given the target distribution (mean 6.4, std 4.9).
+
+### Key Insights
+
+1. **Pricing relative to market is everything.** `price_diff` alone accounts for ~33% of the production model's predictive power. Hosts who price below the recommended price see dramatically more bookings.
+
+2. **Listing quality matters.** Description length (~38%) and number of photos (~16%) together account for over half of the importance. This is actionable — Turo could nudge hosts to write longer descriptions and upload more photos.
+
+3. **Parking and technology are noise.** Together they account for ~13% of importance. These are "nice to have" but don't drive booking decisions.
 
 ## Latency Benchmark Report
 
@@ -274,14 +283,14 @@ Features computed on the fly from request attributes → model inference.
 
 | Metric | Value |
 |--------|-------|
-| **Average** | 18.94 ms |
-| **p50 (median)** | 18.04 ms |
-| **p95** | 29.07 ms |
-| **p99** | 31.63 ms |
+| **Average** | 13.87 ms |
+| **p50 (median)** | 13.24 ms |
+| **p95** | 14.38 ms |
+| **p99** | 25.23 ms |
 
 Step breakdown:
-- Feature computation (FeatureComputer deployment): **2.65 ms** avg
-- Model inference (Predictor deployment): **16.29 ms** avg
+- Feature computation (FeatureComputer deployment): **0.19 ms** avg
+- Model inference (Predictor deployment): **13.68 ms** avg
 
 ### Online Store Path (`POST /predict/id`)
 
@@ -289,24 +298,24 @@ Pre-computed features looked up from Redis → model inference.
 
 | Metric | Value |
 |--------|-------|
-| **Average** | 18.13 ms |
-| **p50 (median)** | 17.83 ms |
-| **p95** | 18.83 ms |
-| **p99** | 29.33 ms |
+| **Average** | 13.86 ms |
+| **p50 (median)** | 13.22 ms |
+| **p95** | 14.62 ms |
+| **p99** | 24.93 ms |
 
 Step breakdown:
-- Feature lookup from Redis (FeatureLookup deployment): **2.57 ms** avg
-- Model inference (Predictor deployment): **15.56 ms** avg
+- Feature lookup from Redis (FeatureLookup deployment): **0.17 ms** avg
+- Model inference (Predictor deployment): **13.69 ms** avg
 
 ### Analysis
 
-Both paths have similar total latency (~18ms) because:
+Both paths have similar total latency (~14ms) because:
 
-1. **Model inference dominates** at ~16ms — a RandomForest with 200 trees
+1. **Model inference dominates** at ~13.7ms — a RandomForest with 100 trees
    traverses all trees on every prediction.
-2. **Feature computation is trivial** (~2.6ms) — two arithmetic operations
-   (price_diff, price_ratio) take the same time as a Redis network round-trip.
-3. **Ray Serve inter-deployment communication** adds ~2-3ms per hop
+2. **Feature computation is trivial** (~0.2ms) — a single arithmetic operation
+   (price_diff) takes roughly the same time as a Redis network round-trip.
+3. **Ray Serve inter-deployment communication** adds ~1-2ms per hop
    (serialization through Ray's object store).
 
 The online store path shows **tighter p95/p99 latency** (18.8ms vs 29.1ms),
