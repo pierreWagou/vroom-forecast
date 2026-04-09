@@ -26,8 +26,10 @@ in isolated sub-project environments.
 
 | DAG | Schedule | Description |
 |---|---|---|
-| `vroom_forecast_materialize` | `0 1 * * *` (daily) | `seed` -> `materialize`: seed DB from CSVs, compute features, write Parquet + Redis |
-| `vroom_forecast_training` | Dataset-driven (after materialize) | `train` -> `trigger_promotion`: train from offline store, register candidate |
+| `vroom_forecast_materialize` | Manual | `seed` -> `materialize`: seed DB + compute features, write Parquet + Redis |
+| `vroom_forecast_training` | Manual | `train`: train from offline store, register candidate |
+| `vroom_forecast_promotion` | Manual | `promote`: compare candidate vs champion, promote if better |
+| `vroom_forecast_pipeline` | Manual | `trigger_training` -> `trigger_promotion`: orchestrator (UI "Train" button) |
 | `vroom_forecast_promotion` | Event-driven (triggered by training) | `promote`: compare candidate vs champion, promote if better, notify via Redis |
 
 ## Dependency Chaining

@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     redis_url: str | None = None  # Redis URL for model reload pub/sub
     db_path: str = "/feast-data/vehicles.db"  # SQLite path for vehicle persistence
     offline_store_path: str | None = None  # Parquet path for offline feature store
+    airflow_url: str | None = None  # Airflow REST API base URL
 
     model_config = {"env_prefix": "SERVING_"}
 

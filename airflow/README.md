@@ -28,9 +28,10 @@ graph LR
 
 | DAG | Schedule | Tasks | Description |
 |-----|----------|-------|-------------|
-| `vroom_forecast_materialize` | `0 1 * * *` (daily) | seed, materialize | Seed DB from CSVs, compute features, write Parquet + Redis (new arrivals) |
-| `vroom_forecast_training` | Dataset-driven (after materialize) | train, trigger_promotion | Train from offline store, register candidate, trigger promotion |
-| `vroom_forecast_promotion` | None (event-driven) | promote | Compare candidate vs champion, promote if better, notify via Redis |
+| `vroom_forecast_materialize` | Manual | seed, materialize | Seed DB + compute features, write Parquet + Redis |
+| `vroom_forecast_training` | Manual | train | Train from offline store, register candidate |
+| `vroom_forecast_promotion` | Manual | promote | Compare candidate vs champion, promote if better, notify via Redis |
+| `vroom_forecast_pipeline` | Manual | trigger_training, trigger_promotion | Orchestrator: chains training → promotion (used by UI "Train" button) |
 
 ## Materialization Pipeline
 

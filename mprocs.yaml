@@ -1,16 +1,12 @@
 procs:
   mlflow:
     cmd: ["docker", "compose", "up", "--menu=false", "mlflow"]
-    stop: "SIGTERM"
   redis:
     cmd: ["docker", "compose", "up", "--menu=false", "redis"]
-    stop: "SIGTERM"
   airflow:
     cmd: ["docker", "compose", "up", "--build", "--menu=false", "airflow"]
-    stop: "SIGTERM"
   ray-serve:
     cmd: ["docker", "compose", "up", "--build", "--menu=false", "ray-serve"]
-    stop: "SIGTERM"
   ui:
     cmd: ["npm", "run", "dev"]
     cwd: "ui"

@@ -13,6 +13,7 @@ dependencies = [
     "numpy>=2.2",
     "feast[redis]>=0.61",
     "redis>=4.2,<5",
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]

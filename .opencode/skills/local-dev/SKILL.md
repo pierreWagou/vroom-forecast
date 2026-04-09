@@ -86,8 +86,10 @@ Airflow credentials: `admin` / `admin`
 
 | DAG | Schedule | Description |
 |-----|----------|-------------|
-| `vroom_forecast_materialize` | `0 1 * * *` (daily) | Seed DB + compute features -> Parquet (all) + Redis (new arrivals) |
-| `vroom_forecast_training` | Dataset-driven (after materialize) | Train from offline store -> register candidate |
+| `vroom_forecast_materialize` | Manual | Seed DB + compute features -> Parquet (all) + Redis (new arrivals) |
+| `vroom_forecast_training` | Manual | Train from offline store -> register candidate |
+| `vroom_forecast_promotion` | Manual | Compare candidate vs champion -> promote |
+| `vroom_forecast_pipeline` | Manual | Orchestrator: training -> promotion (UI "Train" button) |
 | `vroom_forecast_promotion` | None (event-driven) | Compare candidate vs champion -> promote |
 
 ## Ports

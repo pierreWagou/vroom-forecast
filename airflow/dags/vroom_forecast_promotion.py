@@ -4,10 +4,9 @@ Vroom Forecast — Promotion DAG
 Compares the candidate model against the current champion and promotes it
 if the candidate has a lower cv_mae_mean.
 
-This DAG is event-driven: triggered by the training DAG via
-TriggerDagRunOperator after a new model version is tagged as "candidate".
-It can also be triggered manually (will resolve the "candidate" alias
-from MLflow if no version is provided via DAG conf).
+Independent pipeline — can be triggered standalone or chained via the
+orchestrator DAG (vroom_forecast_pipeline). Resolves the "candidate" alias
+from MLflow if no version is provided via DAG conf.
 """
 
 from __future__ import annotations

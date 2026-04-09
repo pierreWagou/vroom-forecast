@@ -62,6 +62,7 @@ services:
       - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
       - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
       - AIRFLOW__WEBSERVER__SECRET_KEY=vroom-forecast-dev-key
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
       # Feast env vars for feature_store.yaml
       - FEAST_REGISTRY=/feast-data/registry.db
       - FEAST_REDIS=redis:6379
@@ -97,6 +98,7 @@ services:
       - SERVING_REDIS_URL=redis://redis:6379
       - SERVING_DB_PATH=/feast-data/vehicles.db
       - SERVING_OFFLINE_STORE_PATH=/feast-data/vehicle_features.parquet
+      - SERVING_AIRFLOW_URL=http://airflow:8080
       # Feast env vars for feature_store.yaml (mounted read-only)
       - FEAST_REGISTRY=/feast-data/registry.db
       - FEAST_REDIS=redis:6379
@@ -104,7 +106,7 @@ services:
       - ./feast-data:/feast-data
       - ./features/feature_repo:/app/feature_repo:ro
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/-/healthz')"]
       interval: 15s
       timeout: 10s
       retries: 20

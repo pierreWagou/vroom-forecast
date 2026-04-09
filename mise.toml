@@ -50,23 +50,35 @@ echo "Done! Run 'mise run dev' to start all services."
 """
 
 [tasks.dev]
-description = "Start all services (Docker + UI + Jupyter + Docs)"
-run = "mprocs"
+description = "Seed database, compute features, start all services"
+depends = ["seed"]
+run = "mprocs; docker compose down"
 
 [tasks.check]
 description = "Run all linters, type checkers, and tests (full CI-equivalent check)"
 run = "uvx pre-commit run --all-files"
 
 [tasks.seed]
-description = "Seed the database and materialize features (requires Docker services)"
+description = "Seed the database and compute features (no Docker needed)"
 run = """
 echo "Seeding database..."
 cd features && uv run python seed.py \
     --data-dir ../data \
     --db ../feast-data/vehicles.db
 
-echo "Materializing features..."
-uv run python pipeline.py \
+echo "Computing features..."
+uv run python -c "
+from pipeline import load_from_db, compute_features, write_parquet
+v, r = load_from_db('../feast-data/vehicles.db')
+df = compute_features(v, r)
+write_parquet(df[df['num_reservations'].notna()], '../feast-data/vehicle_features.parquet')
+"
+"""
+
+[tasks.materialize]
+description = "Full materialize pipeline including online store (requires Docker services)"
+run = """
+cd features && uv run python pipeline.py \
     --db ../feast-data/vehicles.db \
     --feast-repo feature_repo \
     --parquet-path ../feast-data/vehicle_features.parquet
@@ -89,5 +101,5 @@ uv run --project promotion python -m promotion \
 """
 
 [tasks.pipeline]
-description = "Run full ML pipeline: seed → train → promote"
-depends = ["seed", "train", "promote"]
+description = "Run full ML pipeline: seed → materialize → train → promote"
+depends = ["seed", "materialize", "train", "promote"]

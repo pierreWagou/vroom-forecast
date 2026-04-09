@@ -27,6 +27,7 @@ from serving.schemas import (
     BenchmarkRequest,
     BenchmarkResponse,
     ComputedFeatures,
+    DagRunStatus,
     DeleteVehicleResponse,
     FeatureViewInfo,
     HealthResponse,
@@ -35,6 +36,7 @@ from serving.schemas import (
     SaveVehicleResponse,
     StoreDetails,
     StoreInfoResponse,
+    TriggerDagResponse,
     VehicleFeatures,
     VehicleIdRequest,
     VehicleRecord,
@@ -77,11 +79,20 @@ class VroomForecastApp:
     async def health(self) -> HealthResponse:
         """Check API health, model status, and feature store availability."""
         is_loaded = await self.predictor.is_loaded.remote()
-        if not is_loaded:
-            raise HTTPException(status_code=503, detail="Model not loaded")
-        version = await self.predictor.get_version.remote()
+        is_loading = await self.predictor.is_loading.remote()
         feast_online = await self.feature_lookup.is_available.remote()
-        status = "ok" if feast_online else "degraded"
+
+        if is_loading:
+            status = "loading"
+        elif is_loaded:
+            status = "ok"
+        else:
+            status = "no_model"
+
+        version = ""
+        if is_loaded:
+            version = await self.predictor.get_version.remote()
+
         return HealthResponse(
             status=status,
             model_name=settings.model_name,
@@ -89,6 +100,24 @@ class VroomForecastApp:
             mlflow_uri=settings.mlflow_uri,
             feast_online=feast_online,
         )
+
+        version = await self.predictor.get_version.remote()
+        feast_online = await self.feature_lookup.is_available.remote()
+        return HealthResponse(
+            status="ok",
+            model_name=settings.model_name,
+            model_version=version,
+            mlflow_uri=settings.mlflow_uri,
+            feast_online=feast_online,
+        )
+
+    @app.get("/model")
+    async def model_info(self) -> dict:
+        """Return metadata about the currently loaded champion model."""
+        info = await self.predictor.get_model_info.remote()
+        if info is None:
+            raise HTTPException(status_code=404, detail="No model loaded")
+        return info
 
     @app.post("/reload", response_model=ReloadResponse)
     async def reload_model(self) -> ReloadResponse:
@@ -98,6 +127,77 @@ class VroomForecastApp:
             status="reloaded" if current != previous else "unchanged",
             previous_version=previous,
             current_version=current,
+        )
+
+    @app.post("/materialize", response_model=TriggerDagResponse)
+    async def trigger_materialize(self) -> TriggerDagResponse:
+        """Trigger the Airflow materialization pipeline."""
+        return await self._trigger_dag("vroom_forecast_materialize")
+
+    @app.post("/train", response_model=TriggerDagResponse)
+    async def trigger_train(self) -> TriggerDagResponse:
+        """Trigger the end-to-end ML pipeline (training + promotion)."""
+        return await self._trigger_dag("vroom_forecast_pipeline")
+
+    async def _trigger_dag(self, dag_id: str) -> TriggerDagResponse:
+        """Trigger an Airflow DAG run via the REST API."""
+        import httpx
+
+        if not settings.airflow_url:
+            raise HTTPException(status_code=503, detail="Airflow URL not configured")
+
+        async with httpx.AsyncClient() as client:
+            res = await client.post(
+                f"{settings.airflow_url}/api/v1/dags/{dag_id}/dagRuns",
+                json={},
+                auth=("admin", "admin"),
+                timeout=10,
+            )
+
+        if res.status_code >= 400:
+            detail = (
+                res.json().get("detail", res.text)
+                if res.headers.get("content-type", "").startswith("application/json")
+                else res.text
+            )
+            raise HTTPException(status_code=res.status_code, detail=detail)
+
+        body = res.json()
+        return TriggerDagResponse(
+            status="triggered",
+            dag_id=dag_id,
+            dag_run_id=body.get("dag_run_id"),
+        )
+
+    @app.get(
+        "/pipelines/{dag_id}/{dag_run_id:path}",
+        response_model=DagRunStatus,
+    )
+    async def get_dag_run_status(self, dag_id: str, dag_run_id: str) -> DagRunStatus:
+        """Poll the status of an Airflow DAG run."""
+        import httpx
+
+        if not settings.airflow_url:
+            raise HTTPException(status_code=503, detail="Airflow URL not configured")
+
+        async with httpx.AsyncClient() as client:
+            res = await client.get(
+                f"{settings.airflow_url}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}",
+                auth=("admin", "admin"),
+                timeout=10,
+            )
+
+        if res.status_code >= 400:
+            raise HTTPException(
+                status_code=res.status_code,
+                detail=f"DAG run not found: {dag_id}/{dag_run_id}",
+            )
+
+        body = res.json()
+        return DagRunStatus(
+            dag_id=dag_id,
+            dag_run_id=dag_run_id,
+            state=body.get("state", "unknown"),
         )
 
     @app.get("/stores", response_model=StoreInfoResponse)
@@ -168,40 +268,66 @@ class VroomForecastApp:
 
     @app.get("/events")
     async def events(self) -> StreamingResponse:
-        """SSE endpoint — streams model-promoted events from Redis pub/sub.
+        """SSE endpoint — streams model events from Redis pub/sub.
 
-        The UI subscribes via EventSource to get notified when a new champion
-        is promoted, without polling. Falls back gracefully if Redis is not
-        configured (stream stays open but silent).
+        Subscribes to the `model-promoted` channel which carries both
+        promotion events (from the pipeline) and reload events (from the
+        Predictor). On each event, fetches the current Predictor state
+        and emits a health-changed SSE event.
+
+        Purely event-driven — no polling.
         """
         predictor_handle = self.predictor
 
         async def event_stream() -> AsyncGenerator[str, None]:
             import redis.asyncio as aioredis
 
+            # Emit current health status on connect
+            is_loaded = await predictor_handle.is_loaded.remote()
+            is_loading = await predictor_handle.is_loading.remote()
+            version = ""
+            if is_loaded:
+                version = await predictor_handle.get_version.remote()
+            if is_loading:
+                status = "loading"
+            elif is_loaded:
+                status = "ok"
+            else:
+                status = "no_model"
+            evt = {
+                "type": "health-changed",
+                "status": status,
+                "model_version": version,
+            }
+            yield f"data: {json.dumps(evt)}\n\n"
+
             if settings.redis_url is None:
                 while True:
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(30)
+                    yield ": keepalive\n\n"
                 return
 
             r = aioredis.from_url(settings.redis_url)
             pubsub = r.pubsub()
-            from serving.model import MODEL_PROMOTED_CHANNEL
+            from serving.model import MODEL_LOADED_CHANNEL
 
-            await pubsub.subscribe(MODEL_PROMOTED_CHANNEL)
+            await pubsub.subscribe(MODEL_LOADED_CHANNEL)
 
             try:
                 while True:
-                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                    if message and message["type"] == "message":
-                        data = json.loads(message["data"])
-                        version = await predictor_handle.get_version.remote()
-                        event_data = {
-                            "type": "model-promoted",
+                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=5.0)
+                    if msg and msg["type"] == "message":
+                        # Any event on this channel means model state changed
+                        is_loaded = await predictor_handle.is_loaded.remote()
+                        version = ""
+                        if is_loaded:
+                            version = await predictor_handle.get_version.remote()
+                        evt = {
+                            "type": "health-changed",
+                            "status": "ok" if is_loaded else "no_model",
                             "model_version": version,
-                            "promoted_version": data.get("version", ""),
                         }
-                        yield f"data: {json.dumps(event_data)}\n\n"
+                        yield f"data: {json.dumps(evt)}\n\n"
                     else:
                         yield ": keepalive\n\n"
                     await asyncio.sleep(0.1)

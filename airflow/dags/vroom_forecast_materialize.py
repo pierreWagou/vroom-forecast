@@ -2,10 +2,12 @@
 Vroom Forecast — Feature Materialization DAG
 
 Seeds the database from CSVs (idempotent), computes features, writes to
-the Feast offline store (Parquet), and materializes to the online store (Redis).
+the Feast offline store (Parquet), and materializes new arrivals to the
+online store (Redis).
 
-Runs daily at 01:00 UTC — features stay fresh independently of training.
-Can also be triggered manually or by an upstream data pipeline.
+The host runs seed + Parquet computation as part of `mise run dev` so the
+catalog is available immediately. This DAG handles the full pipeline
+including the online store (Redis) which requires Docker services.
 """
 
 from __future__ import annotations
@@ -21,14 +23,14 @@ FEAST_REPO = "/opt/airflow/features/feature_repo"
 PARQUET_PATH = "/feast-data/vehicle_features.parquet"
 PROJECT_DIR = "/opt/airflow"
 
-# Dataset marker for cross-DAG dependency — the training DAG waits for this
+# Dataset marker for cross-DAG dependency
 FEATURES_DATASET = Dataset("file:///feast-data/vehicle_features.parquet")
 
 with DAG(
     dag_id="vroom_forecast_materialize",
-    description="Seed database, compute and materialize vehicle features",
+    description="Seed database and materialize vehicle features",
     start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
-    schedule="0 1 * * *",  # Daily at 01:00 UTC
+    schedule=None,  # Manual trigger only
     catchup=False,
     tags=["ml", "vroom-forecast", "features"],
     default_args={

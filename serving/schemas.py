@@ -161,3 +161,19 @@ class DeleteVehicleResponse(BaseModel):
 
     status: str
     vehicle_id: str
+
+
+class TriggerDagResponse(BaseModel):
+    """Response for triggering an Airflow DAG."""
+
+    status: str
+    dag_id: str
+    dag_run_id: str | None = None
+
+
+class DagRunStatus(BaseModel):
+    """Status of an Airflow DAG run."""
+
+    dag_id: str
+    dag_run_id: str
+    state: str  # queued, running, success, failed

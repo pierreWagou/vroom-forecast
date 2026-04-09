@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 VEHICLE_SAVED_CHANNEL = "vroom-forecast:vehicle-saved"
 VEHICLE_MATERIALIZED_CHANNEL = "vroom-forecast:vehicle-materialized"
 MODEL_PROMOTED_CHANNEL = "vroom-forecast:model-promoted"
+MODEL_LOADED_CHANNEL = "vroom-forecast:model-loaded"
 
 # Feature references for Feast online store lookup
 _ONLINE_FEATURE_REFS = [
@@ -37,19 +38,31 @@ _ONLINE_FEATURE_REFS = [
 class Predictor:
     """Loads the champion model from MLflow and runs inference.
 
-    Model is loaded in __init__ (deployment startup). To reload after
-    promotion, redeploy this deployment — Ray Serve handles zero-downtime
-    rolling updates.
+    Starts empty — the model is loaded when a promotion event is received
+    (via ModelReloadListener) or when the user clicks reload (/reload endpoint).
+    This avoids blocking the Ray Serve actor during startup.
     """
 
     def __init__(self) -> None:
-        """Load the champion model from MLflow on deployment startup."""
+        """Start the Predictor without a model."""
         self.model: Any = None
         self.model_version: str = ""
-        self._load_champion()
+        self.model_info: dict | None = None
+        self._loading: bool = False
 
     def _load_champion(self) -> None:
-        """Fetch and load the champion model version from MLflow."""
+        """Fetch and load the champion model version from MLflow.
+
+        Uses mlflow.artifacts.download_artifacts with the models:/ URI
+        to download from the model registry (fast), then loads from disk.
+        """
+        import os
+
+        # Clear current model — if the load fails, Predictor is left empty
+        self.model = None
+        self.model_version = ""
+        self.model_info = None
+
         mlflow.set_tracking_uri(settings.mlflow_uri)
         client = mlflow.MlflowClient()
 
@@ -70,10 +83,50 @@ class Predictor:
             return
 
         self.model_version = champion_mv.version
-        model_uri = champion_mv.source
-        logger.info("Loading champion model: %s v%s", settings.model_name, self.model_version)
-        self.model = mlflow.sklearn.load_model(model_uri)
+        model_uri = f"models:/{settings.model_name}@champion"
+
+        logger.info(
+            "Loading champion model: %s v%s",
+            settings.model_name,
+            self.model_version,
+        )
+
+        # Download artifacts to a temp dir, then load from disk.
+        local = mlflow.artifacts.download_artifacts(model_uri)
+        # MLflow nests files under a model/ subdir for registry URIs.
+        model_path = os.path.join(local, "model") if "model" in os.listdir(local) else local
+        self.model = mlflow.sklearn.load_model(model_path)
         logger.info("Model loaded successfully.")
+
+        # Capture model metadata from the MLflow run
+        try:
+            run_id = champion_mv.run_id
+            if run_id is None:
+                raise ValueError("No run_id on champion model version")
+            run = client.get_run(run_id)
+            metrics = run.data.metrics
+            params = run.data.params
+
+            # Extract feature importances from the loaded model
+            importances: dict[str, float] = {}
+            if hasattr(self.model, "feature_importances_"):
+                for name, imp in zip(
+                    FEATURE_COLS,
+                    self.model.feature_importances_,
+                    strict=True,
+                ):
+                    importances[name] = round(float(imp), 4)
+
+            self.model_info = {
+                "version": self.model_version,
+                "run_id": champion_mv.run_id,
+                "trained_at": run.info.start_time,
+                "metrics": {k: round(v, 4) for k, v in metrics.items()},
+                "params": params,
+                "feature_importances": importances,
+            }
+        except Exception:
+            logger.debug("Could not fetch model metadata.", exc_info=True)
 
     def predict(self, features_df: pd.DataFrame) -> list[float]:
         """Run inference on a DataFrame of features."""
@@ -96,11 +149,44 @@ class Predictor:
             latencies.append((time.perf_counter() - start) * 1000)
         return latencies
 
-    def reload(self) -> tuple[str, str]:
-        """Reload the champion model. Returns (previous_version, current_version)."""
+    async def reload(self) -> tuple[str, str]:
+        """Reload the champion model. Returns (previous_version, current_version).
+
+        Runs the blocking MLflow download in a thread so the actor can
+        still serve is_loaded/get_version calls concurrently.
+        Publishes a model-loaded event to Redis when done.
+        """
+        import asyncio
+
         previous = self.model_version
-        self._load_champion()
+        self._loading = True
+        try:
+            await asyncio.to_thread(self._load_champion)
+        finally:
+            self._loading = False
+        self._publish_health_changed()
         return previous, self.model_version
+
+    def _publish_health_changed(self) -> None:
+        """Publish model-reloaded event to Redis for SSE consumers."""
+        if settings.redis_url is None:
+            return
+        try:
+            import json
+
+            import redis as redis_lib
+
+            r = redis_lib.from_url(settings.redis_url)
+            payload = json.dumps(
+                {
+                    "type": "model-reloaded",
+                    "version": self.model_version,
+                }
+            )
+            r.publish(MODEL_LOADED_CHANNEL, payload)
+            r.close()
+        except Exception:
+            logger.debug("Failed to publish model-reloaded event.", exc_info=True)
 
     def get_version(self) -> str:
         """Return the currently loaded model version string."""
@@ -109,6 +195,14 @@ class Predictor:
     def is_loaded(self) -> bool:
         """Return True if a model is loaded and ready for inference."""
         return self.model is not None
+
+    def is_loading(self) -> bool:
+        """Return True if a model reload is currently in progress."""
+        return self._loading
+
+    def get_model_info(self) -> dict | None:
+        """Return model metadata (metrics, params, feature importances)."""
+        return self.model_info
 
 
 @serve.deployment(max_ongoing_requests=10)
@@ -292,7 +386,14 @@ class ModelReloadListener:
         self._predictor = predictor_handle
 
     def run(self) -> None:
-        """Subscribe to Redis and reload the model on promotion events."""
+        """Try one initial load, then subscribe to Redis for promotion events."""
+        # Attempt initial model load
+        try:
+            self._predictor.reload.remote().result()
+            logger.info("ModelReloadListener: Initial model load succeeded.")
+        except Exception as e:
+            logger.info("ModelReloadListener: No champion model yet (%s).", e)
+
         if settings.redis_url is None:
             logger.info("ModelReloadListener: No Redis URL — exiting.")
             return
@@ -309,7 +410,7 @@ class ModelReloadListener:
                 continue
             try:
                 logger.info("ModelReloadListener: Got promotion event: %s", message["data"])
-                ray.get(self._predictor.reload.remote())
+                self._predictor.reload.remote().result()
                 logger.info("ModelReloadListener: Model reloaded.")
             except Exception as e:
                 logger.error("ModelReloadListener: Reload failed: %s", e)

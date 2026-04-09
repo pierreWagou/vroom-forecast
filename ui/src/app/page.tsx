@@ -53,6 +53,10 @@ import {
   fetchVehicleFeatures,
   fetchAllVehicleFeatures,
   fetchStoreInfo,
+  fetchModelInfo,
+  triggerMaterialize,
+  triggerTraining,
+  fetchDagRunStatus,
   API_URL,
   type VehicleFeatures,
   type PredictionResponse,
@@ -61,7 +65,10 @@ import {
   type VehicleRecord,
   type ComputedFeatures,
   type StoreInfo,
+  type ModelInfo,
 } from "@/lib/api";
+
+type PipelineState = "idle" | "running" | "success" | "failed";
 
 function randomVehicle(): VehicleFeatures {
   return {
@@ -74,6 +81,82 @@ function randomVehicle(): VehicleFeatures {
   };
 }
 
+/** Pipeline button styling based on state. */
+function pipelineButtonStyle(state: PipelineState, extraDisabled = false): {
+  disabled: boolean;
+  className: string;
+  label: string;
+  spinning: boolean;
+} {
+  const base = "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors";
+  switch (state) {
+    case "running":
+      return { disabled: true, className: `${base} opacity-50 cursor-not-allowed`, label: "Running...", spinning: true };
+    case "success":
+      return { disabled: true, className: `${base} border-green-500 text-green-600 bg-green-50 dark:bg-green-950/30`, label: "Success", spinning: false };
+    case "failed":
+      return { disabled: true, className: `${base} border-red-500 text-red-600 bg-red-50 dark:bg-red-950/30`, label: "Failed", spinning: false };
+    default:
+      return {
+        disabled: extraDisabled,
+        className: `${base} ${extraDisabled ? "opacity-50 cursor-not-allowed" : "hover:bg-muted cursor-pointer"}`,
+        label: "",
+        spinning: false,
+      };
+  }
+}
+
+/** Resolve disabled to `true | undefined` to avoid hydration mismatch. */
+function toDisabledAttr(v: boolean): true | undefined {
+  return v ? true : undefined;
+}
+
+/** Pulsing skeleton bar for loading states. */
+function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded bg-muted ${className}`} />;
+}
+
+/** Skeleton placeholder for a vehicle row in the catalog. */
+function VehicleRowSkeleton() {
+  return (
+    <div className="flex items-center gap-4 rounded-xl border p-4">
+      <Skeleton className="h-10 w-10 rounded-lg shrink-0" />
+      <div className="flex-1 space-y-2">
+        <Skeleton className="h-4 w-32" />
+        <Skeleton className="h-3 w-48" />
+      </div>
+      <Skeleton className="h-8 w-20 rounded-full" />
+    </div>
+  );
+}
+
+/** Skeleton placeholder for a store card in the ML Lifecycle tab. */
+function StoreCardSkeleton() {
+  return (
+    <Card className="shadow-md border-0 bg-card">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-3">
+          <Skeleton className="h-10 w-10 rounded-xl" />
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-3 w-40" />
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="flex justify-between py-2 border-b last:border-0">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-3 w-16" />
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // Static default for SSR — randomized on mount to avoid hydration mismatch
 const DEFAULT_VEHICLE: VehicleFeatures = {
   technology: 0,
@@ -84,12 +167,13 @@ const DEFAULT_VEHICLE: VehicleFeatures = {
   description: 120,
 };
 
-function StatusDot({ online }: { online: boolean }) {
-  return (
-    <span
-      className={`inline-block h-2 w-2 rounded-full ${online ? "bg-turo-teal animate-pulse" : "bg-destructive"}`}
-    />
-  );
+function StatusDot({ status }: { status: "online" | "warning" | "offline" }) {
+  const color = {
+    online: "bg-turo-teal animate-pulse",
+    warning: "bg-amber-400 animate-pulse",
+    offline: "bg-destructive",
+  }[status];
+  return <span className={`inline-block h-2 w-2 rounded-full ${color}`} />;
 }
 
 export default function Home() {
@@ -122,17 +206,38 @@ export default function Home() {
     Record<number, ComputedFeatures>
   >({});
   const [storeInfo, setStoreInfo] = useState<StoreInfo | null>(null);
+  const [materializing, setMaterializing] = useState<PipelineState>("idle");
+  const [training, setTraining] = useState<PipelineState>("idle");
+  const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
+
+  /** Fetch all vehicles and their computed features from the API. */
+  const refreshVehicles = useCallback(async () => {
+    try {
+      const vehicles = await listVehicles();
+      setSavedVehicles(vehicles);
+    } catch {
+      // API may not be reachable yet
+    }
+    try {
+      const allFeatures = await fetchAllVehicleFeatures();
+      const features: Record<number, ComputedFeatures> = {};
+      for (const f of allFeatures) {
+        features[f.vehicle_id] = f;
+      }
+      setVehicleFeatures(features);
+    } catch {
+      // Feature store may not be materialized yet
+    }
+  }, []);
 
   useEffect(() => {
     setMounted(true);
     setVehicle(randomVehicle());
-    fetchHealth().then(setHealth).catch(() => setHealth(null));
-    fetchStoreInfo().then(setStoreInfo).catch(() => {});
   }, []);
 
-  // Subscribe to SSE for model-promoted events — auto-refreshes health when
-  // a new champion is promoted, without polling. Also handles the initial
-  // "offline → online" transition by retrying the EventSource connection.
+  // Subscribe to SSE for health-changed and model-promoted events.
+  // Handles all state transitions (offline → loading → no_model → ok) without polling.
+  // Reconnects on error with a 5s delay.
   useEffect(() => {
     if (!mounted) return;
 
@@ -145,16 +250,33 @@ export default function Home() {
       es.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === "model-promoted") {
-            // Refresh health to get the new model version
-            fetchHealth().then(setHealth).catch(() => {});
+          if (data.type === "health-changed") {
+            setHealth({
+              status: data.status,
+              model_name: "",
+              model_version: data.model_version ?? "",
+              mlflow_uri: "",
+              feast_online: false,
+            });
+            // API is reachable — refresh vehicles and store info
+            refreshVehicles();
+            fetchStoreInfo().then(setStoreInfo).catch(() => {});
+            // Fetch full details when model is loaded
+            if (data.status === "ok") {
+              fetchHealth().then(setHealth);
+              fetchModelInfo().then(setModelInfo);
+            }
+          } else if (data.type === "model-promoted") {
+            fetchHealth().then(setHealth);
+            fetchModelInfo().then(setModelInfo);
           }
         } catch {
           // Ignore parse errors (keepalive comments etc.)
         }
       };
       es.onerror = () => {
-        // Connection lost — close and retry in 5s
+        // Connection lost — mark as offline and retry in 5s
+        setHealth(null);
         es?.close();
         retryTimeout = setTimeout(connect, 5000);
       };
@@ -165,19 +287,19 @@ export default function Home() {
       es?.close();
       if (retryTimeout) clearTimeout(retryTimeout);
     };
-  }, [mounted]);
+  }, [mounted, refreshVehicles]);
 
   /** Reload the champion model from MLflow and refresh health status. */
   const handleReload = async () => {
     setReloading(true);
-    setError(null);
     try {
       await reloadModel();
-      // Refresh health to get updated version
       const h = await fetchHealth();
       setHealth(h);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Reload failed");
+      fetchModelInfo().then(setModelInfo);
+    } catch {
+      // Silently refresh health — the status indicator already shows the state
+      fetchHealth().then(setHealth);
     } finally {
       setReloading(false);
     }
@@ -325,22 +447,66 @@ export default function Home() {
     }
   };
 
-  /** Fetch all vehicles and their computed features from the API. */
-  const refreshVehicles = useCallback(async () => {
+  /** Poll an Airflow DAG run until it completes. Returns final state. */
+  const pollDagRun = async (dagId: string, dagRunId: string): Promise<"success" | "failed"> => {
+    const poll = () =>
+      new Promise<"success" | "failed">((resolve) => {
+        const interval = setInterval(async () => {
+          try {
+            const status = await fetchDagRunStatus(dagId, dagRunId);
+            if (status.state === "success" || status.state === "failed") {
+              clearInterval(interval);
+              resolve(status.state as "success" | "failed");
+            }
+          } catch {
+            clearInterval(interval);
+            resolve("failed");
+          }
+        }, 3000);
+      });
+    return poll();
+  };
+
+  /** Trigger the Airflow materialize pipeline and poll until done. */
+  const handleMaterialize = async () => {
+    setMaterializing("running");
+    setError(null);
     try {
-      const vehicles = await listVehicles();
-      setSavedVehicles(vehicles);
-      // Fetch computed features for all vehicles in a single batch call
-      const allFeatures = await fetchAllVehicleFeatures();
-      const features: Record<number, ComputedFeatures> = {};
-      for (const f of allFeatures) {
-        features[f.vehicle_id] = f;
+      const resp = await triggerMaterialize();
+      if (!resp.dag_run_id) throw new Error("No dag_run_id returned");
+      const result = await pollDagRun(resp.dag_id, resp.dag_run_id);
+      setMaterializing(result);
+      // Refresh data on success
+      if (result === "success") {
+        fetchStoreInfo().then(setStoreInfo).catch(() => {});
+        refreshVehicles();
       }
-      setVehicleFeatures(features);
-    } catch {
-      // silently ignore — vehicles tab may not be active
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to trigger materialization");
+      setMaterializing("failed");
     }
-  }, []);
+    // Reset to idle after 3s so the button returns to normal
+    setTimeout(() => setMaterializing("idle"), 3000);
+  };
+
+  /** Trigger the Airflow training + promotion pipeline and poll until done. */
+  const handleTrain = async () => {
+    setTraining("running");
+    setError(null);
+    try {
+      const resp = await triggerTraining();
+      if (!resp.dag_run_id) throw new Error("No dag_run_id returned");
+      const result = await pollDagRun(resp.dag_id, resp.dag_run_id);
+      setTraining(result);
+      if (result === "success") {
+        fetchModelInfo().then(setModelInfo);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to trigger training");
+      setTraining("failed");
+    }
+    setTimeout(() => setTraining("idle"), 3000);
+  };
 
   useEffect(() => {
     if (mounted) refreshVehicles();
@@ -402,6 +568,11 @@ export default function Home() {
       : 0;
   const priceDiff = vehicle.actual_price - vehicle.recommended_price;
 
+  // Four UI states: unreachable (null), no_model, loading, ready
+  const apiReachable = health !== null;
+  const modelLoading = apiReachable && health.status === "loading";
+  const modelLoaded = apiReachable && health.status === "ok";
+
   const filteredVehicles = savedVehicles.filter((v) => {
     if (!fleetSearch) return true;
     const q = fleetSearch.toLowerCase();
@@ -444,19 +615,25 @@ export default function Home() {
                     <div className="flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 text-sm backdrop-blur-sm cursor-default" />
                   }
                 >
-                  <StatusDot online={!!health} />
-                  {health ? (
-                    <span>
-                      Model v{health.model_version}
-                    </span>
+                  <StatusDot status={modelLoaded ? "online" : apiReachable ? "warning" : "offline"} />
+                  {modelLoaded ? (
+                    <span>Model v{health!.model_version}</span>
+                  ) : modelLoading ? (
+                    <span className="text-amber-200">Loading...</span>
+                  ) : apiReachable ? (
+                    <span className="text-amber-200">No model</span>
                   ) : (
                     <span className="text-white/60">Offline</span>
                   )}
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
-                  {health
-                    ? `Connected to ${health.model_name} on MLflow`
-                    : "Cannot reach the prediction API"}
+                  {modelLoaded
+                    ? `Connected to ${health!.model_name} on MLflow`
+                    : modelLoading
+                      ? "Loading champion model from MLflow..."
+                      : apiReachable
+                        ? "No champion model in MLflow. Train a model from the ML Lifecycle tab."
+                        : "Cannot reach the prediction API"}
                 </TooltipContent>
               </Tooltip>
 
@@ -466,9 +643,9 @@ export default function Home() {
                     <button
                       type="button"
                       aria-label="Reload champion model from MLflow"
-                      onClick={reloading || !health ? undefined : handleReload}
-                      disabled={!mounted || reloading || !health || undefined}
-                      className={`flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors ${!mounted || reloading || !health ? "opacity-50 cursor-not-allowed" : "hover:bg-white/25 cursor-pointer"}`}
+                      onClick={reloading ? undefined : handleReload}
+                      disabled={mounted && reloading ? true : undefined}
+                      className={`flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm transition-colors ${!mounted || reloading ? "opacity-50 cursor-not-allowed" : "hover:bg-white/25 cursor-pointer"}`}
                     />
                   }
                 >
@@ -554,9 +731,9 @@ export default function Home() {
             </TabsTrigger>
             <TabsTrigger
               value="features"
-              className="rounded-full data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+              className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-full px-4 text-xs cursor-pointer"
             >
-              Feature Store
+              ML Lifecycle
             </TabsTrigger>
           </TabsList>
 
@@ -744,7 +921,7 @@ export default function Home() {
                       className="flex-1 rounded-full h-11 text-base font-semibold shadow-lg shadow-primary/25"
                       size="lg"
                       onClick={handlePredict}
-                      disabled={loading || (mounted && !health)}
+                      disabled={loading || (mounted && !modelLoaded)}
                     >
                       {loading ? (
                         <span className="flex items-center gap-2">
@@ -761,9 +938,9 @@ export default function Home() {
                           <button
                             type="button"
                             aria-label="Save vehicle to catalog"
-                            onClick={saving || !health ? undefined : handleSaveVehicle}
-                            disabled={!mounted || saving || !health || undefined}
-                            className={`flex h-11 w-11 items-center justify-center rounded-full border ${!mounted || saving || !health ? "opacity-50 cursor-not-allowed" : "hover:bg-muted cursor-pointer"}`}
+                            onClick={saving || !apiReachable ? undefined : handleSaveVehicle}
+                            disabled={mounted && (saving || !apiReachable) ? true : undefined}
+                            className={`flex h-11 w-11 items-center justify-center rounded-full border ${!mounted || saving || !apiReachable ? "opacity-50 cursor-not-allowed" : "hover:bg-muted cursor-pointer"}`}
                           />
                         }
                       >
@@ -913,14 +1090,14 @@ export default function Home() {
                     </div>
                     <Button
                       onClick={handleBenchmark}
-                      disabled={benchLoading || (mounted && !health)}
+                      disabled={benchLoading || (mounted && !modelLoaded)}
                       className="rounded-full shadow-lg shadow-primary/25"
                     >
                       {benchLoading ? "Running..." : "Raw Features"}
                     </Button>
                     <Button
                       onClick={handleBenchmarkStore}
-                      disabled={benchStoreLoading || (mounted && !health) || !benchVehicleId}
+                      disabled={benchStoreLoading || (mounted && !modelLoaded) || !benchVehicleId}
                       className="rounded-full bg-turo-teal text-white shadow-lg shadow-turo-teal/25 hover:bg-turo-teal/90"
                     >
                       {benchStoreLoading ? "Running..." : "Online Store"}
@@ -1135,6 +1312,16 @@ export default function Home() {
               </Card>
 
               {savedVehicles.length === 0 ? (
+                !apiReachable ? (
+                  <Card className="shadow-md border-0 bg-card">
+                    <CardContent className="pt-6">
+                      <p className="text-xs text-muted-foreground mb-4">Connecting to prediction API...</p>
+                      <div className="space-y-3">
+                        {[1, 2, 3].map((i) => <VehicleRowSkeleton key={i} />)}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : (
                 <Card className="shadow-md border-0 bg-card">
                   <CardContent className="pt-6">
                     <div className="text-center py-12">
@@ -1151,6 +1338,7 @@ export default function Home() {
                     </div>
                   </CardContent>
                 </Card>
+                )
               ) : (
                 <>
                   {/* ── New Arrivals Section ── */}
@@ -1173,7 +1361,7 @@ export default function Home() {
                             size="sm"
                             className="rounded-full"
                             onClick={handlePredictAll}
-                            disabled={mounted && !health}
+                            disabled={mounted && !modelLoaded}
                           >
                             Simulate All
                           </Button>
@@ -1243,7 +1431,7 @@ export default function Home() {
                                         variant="outline"
                                         className="rounded-full"
                                         onClick={() => handlePredictById(v.vehicle_id)}
-                                        disabled={(mounted && !health) || !feat?.materialized}
+                                        disabled={(mounted && !modelLoaded) || !feat?.materialized}
                                       >
                                         Simulate
                                       </Button>
@@ -1318,16 +1506,40 @@ export default function Home() {
                   {/* ── Fleet Section ── */}
                   <Card className="shadow-md border-0 bg-card">
                     <CardHeader className="pb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
-                          <Car className="h-4 w-4 text-primary" />
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
+                            <Car className="h-4 w-4 text-primary" />
+                          </div>
+                          <CardTitle className="text-base">
+                            Fleet
+                            <span className="ml-2 text-sm font-normal text-muted-foreground">
+                              {fleetVehicles.length} vehicles
+                            </span>
+                          </CardTitle>
                         </div>
-                        <CardTitle className="text-base">
-                          Fleet
-                          <span className="ml-2 text-sm font-normal text-muted-foreground">
-                            {fleetVehicles.length} vehicles
-                          </span>
-                        </CardTitle>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={(() => {
+                              const s = pipelineButtonStyle(materializing, !mounted);
+                              return (
+                                <button
+                                  type="button"
+                                  aria-label="Refresh fleet (run materialization pipeline)"
+                                  onClick={s.disabled ? undefined : handleMaterialize}
+                                  disabled={s.disabled || undefined}
+                                  className={s.className}
+                                />
+                              );
+                            })()}
+                          >
+                            <RefreshCw className={`h-3 w-3 ${materializing === "running" ? "animate-spin" : ""}`} />
+                            {pipelineButtonStyle(materializing).label || "Materialize"}
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Trigger the Airflow materialization pipeline
+                          </TooltipContent>
+                        </Tooltip>
                       </div>
                       <CardDescription className="text-xs">
                         Vehicles with observed reservation history &mdash; features from the batch pipeline
@@ -1457,9 +1669,38 @@ export default function Home() {
             </div>
           </TabsContent>
 
-          {/* ── Feature Store Tab ── */}
+          {/* ── ML Lifecycle Tab ── */}
           <TabsContent value="features">
-            {(() => {
+            {!apiReachable ? (
+              <div className="space-y-6">
+                <p className="text-xs text-muted-foreground">Connecting to prediction API...</p>
+                <div className="grid gap-6 md:grid-cols-2">
+                  <StoreCardSkeleton />
+                  <StoreCardSkeleton />
+                </div>
+                <Card className="shadow-md border-0 bg-card">
+                  <CardHeader>
+                    <div className="space-y-2">
+                      <Skeleton className="h-4 w-48" />
+                      <Skeleton className="h-3 w-64" />
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                      {[1, 2, 3, 4, 5].map((i) => (
+                        <div key={i} className="rounded-lg border bg-muted/30 px-3 py-2 space-y-2">
+                          <Skeleton className="h-3 w-16" />
+                          <Skeleton className="h-2 w-24" />
+                          <Skeleton className="h-1 w-full rounded-full" />
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+                <StoreCardSkeleton />
+              </div>
+            ) : (
+            (() => {
               const allFeatures = Object.values(vehicleFeatures);
               const offlineCount = allFeatures.filter((f) => f.store === "offline").length;
               const onlineCount = allFeatures.filter((f) => f.store === "online").length;
@@ -1472,14 +1713,38 @@ export default function Home() {
                     {/* Offline store */}
                     <Card className="shadow-md border-0 bg-card">
                       <CardHeader className="pb-3">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
-                            <HardDrive className="h-5 w-5 text-primary" />
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+                              <HardDrive className="h-5 w-5 text-primary" />
+                            </div>
+                            <div>
+                              <CardTitle className="text-base">Offline Store</CardTitle>
+                              <CardDescription className="text-xs">Batch features for training &amp; fleet display</CardDescription>
+                            </div>
                           </div>
-                          <div>
-                            <CardTitle className="text-base">Offline Store</CardTitle>
-                            <CardDescription className="text-xs">Batch features for training &amp; fleet display</CardDescription>
-                          </div>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={(() => {
+                                const s = pipelineButtonStyle(materializing, !mounted);
+                                return (
+                                  <button
+                                    type="button"
+                                    aria-label="Run materialization pipeline"
+                                    onClick={s.disabled ? undefined : handleMaterialize}
+                                   disabled={toDisabledAttr(s.disabled)}
+                                    className={s.className}
+                                  />
+                                );
+                              })()}
+                            >
+                              <RefreshCw className={`h-3 w-3 ${materializing === "running" ? "animate-spin" : ""}`} />
+                              {pipelineButtonStyle(materializing).label || "Materialize"}
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Trigger the Airflow materialization pipeline
+                            </TooltipContent>
+                          </Tooltip>
                         </div>
                       </CardHeader>
                       <CardContent>
@@ -1573,6 +1838,7 @@ export default function Home() {
                         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                           {storeInfo.feature_view.features.map((feat) => {
                             const isDerived = feat === "price_diff";
+                            const importance = modelInfo?.feature_importances[feat];
                             return (
                               <div
                                 key={feat}
@@ -1590,6 +1856,17 @@ export default function Home() {
                                 ) : (
                                   <p className="text-[10px] text-muted-foreground">raw attribute</p>
                                 )}
+                                {importance != null && (
+                                  <div className="mt-1.5">
+                                    <div className="h-1 rounded-full bg-muted overflow-hidden">
+                                      <div
+                                        className={`h-full rounded-full transition-all ${isDerived ? "bg-turo-teal" : "bg-primary"}`}
+                                        style={{ width: `${importance * 100}%` }}
+                                      />
+                                    </div>
+                                    <p className="text-[10px] text-muted-foreground mt-0.5 font-mono">{(importance * 100).toFixed(1)}%</p>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
@@ -1601,9 +1878,105 @@ export default function Home() {
                       </CardContent>
                     </Card>
                   )}
+
+                  {/* Champion model */}
+                  <Card className="shadow-md border-0 bg-card">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+                            <Settings className="h-5 w-5 text-primary" />
+                          </div>
+                          <div>
+                            <CardTitle className="text-base">Champion Model</CardTitle>
+                            <CardDescription className="text-xs">
+                              {modelInfo
+                                ? <>
+                                    <a
+                                      href={`http://localhost:5001/#/models/${health?.model_name ?? "vroom-forecast"}/versions/${modelInfo.version}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="underline hover:text-primary transition-colors"
+                                    >
+                                      v{modelInfo.version}
+                                    </a>
+                                    {" "}&middot; trained {new Date(modelInfo.trained_at).toLocaleDateString()}
+                                  </>
+                                : "No champion model loaded"}
+                            </CardDescription>
+                          </div>
+                        </div>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={(() => {
+                              const s = pipelineButtonStyle(training, !mounted || !apiReachable);
+                              return (
+                                <button
+                                  type="button"
+                                  aria-label="Train a new model"
+                                  onClick={s.disabled ? undefined : handleTrain}
+                                  disabled={s.disabled || undefined}
+                                  className={s.className}
+                                />
+                              );
+                            })()}
+                          >
+                            <RefreshCw className={`h-3 w-3 ${training === "running" ? "animate-spin" : ""}`} />
+                            {pipelineButtonStyle(training).label || "Train"}
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Trigger training + promotion pipeline
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </CardHeader>
+                    {modelInfo && (
+                      <CardContent>
+                        <div className="grid gap-6 md:grid-cols-2">
+                          {/* Params */}
+                          <div className="space-y-2">
+                            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Parameters</h4>
+                            <div className="space-y-1.5">
+                              {Object.entries(modelInfo.params)
+                                .sort(([a], [b]) => a.localeCompare(b))
+                                .map(([key, value]) => (
+                                  <div key={key} className="flex items-center justify-between py-1 text-sm">
+                                    <span className="text-muted-foreground">{key}</span>
+                                    <span className="font-mono text-xs">{value}</span>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                          {/* Metrics */}
+                          <div className="space-y-2">
+                            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Performance</h4>
+                            <div className="space-y-1.5">
+                              {modelInfo.metrics.cv_mae_mean != null && (
+                                <div className="flex items-center justify-between py-1 text-sm">
+                                  <span className="text-muted-foreground">CV MAE (mean)</span>
+                                  <span className="font-mono font-medium text-primary">
+                                    {modelInfo.metrics.cv_mae_mean.toFixed(4)}
+                                  </span>
+                                </div>
+                              )}
+                              {modelInfo.metrics.cv_mae_std != null && (
+                                <div className="flex items-center justify-between py-1 text-sm">
+                                  <span className="text-muted-foreground">CV MAE (std)</span>
+                                  <span className="font-mono font-medium">
+                                    &plusmn;{modelInfo.metrics.cv_mae_std.toFixed(4)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </CardContent>
+                    )}
+                  </Card>
                 </div>
               );
-            })()}
+            })()
+            )}
           </TabsContent>
         </Tabs>
       </div>
