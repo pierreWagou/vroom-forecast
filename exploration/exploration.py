@@ -196,34 +196,7 @@ plt.show()
 # - `description`: range 1–250 chars, right-skewed with most listings under 100 chars
 
 # %% [markdown]
-# ### 5.3 Correlation Matrix
-#
-# Linear correlations between all raw features and the target. This won't
-# capture non-linear relationships but gives a quick overview of which
-# features have a direct linear association with reservations.
-
-# %%
-corr = df[feature_cols + ["num_reservations"]].corr()
-
-fig, ax = plt.subplots(figsize=(8, 6))
-sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", center=0, ax=ax)
-ax.set_title("Correlation Matrix")
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# **Observations:**
-# - `price_ratio` has the strongest negative correlation with reservations (-0.40)
-#   — vehicles priced above the market recommendation get fewer bookings
-# - `actual_price` is moderately negative (-0.26) — cheaper vehicles book more
-# - `num_images` is the strongest positive correlation (+0.22) — more photos help
-# - `technology` has a mild positive effect (+0.14)
-# - `description` and `street_parked` are near zero — no linear relationship
-# - `recommended_price` alone is almost uncorrelated (-0.01) — it only matters
-#   in relation to `actual_price`
-
-# %% [markdown]
-# ### 5.4 Reservations by Categorical Features
+# ### 5.3 Reservations by Categorical Features (binary)
 #
 # Box plots for the two binary features. Do vehicles with technology or
 # street parking have different reservation distributions?
@@ -246,7 +219,7 @@ plt.show()
 #   This confirms the near-zero correlation.
 
 # %% [markdown]
-# ### 5.5 Reservations vs. Continuous Features
+# ### 5.4 Reservations vs. Continuous Features
 #
 # Scatter plots to look for non-linear patterns that the correlation matrix misses.
 
@@ -267,20 +240,91 @@ plt.show()
 # **Observations:**
 # - `actual_price`: clear negative trend — cheaper vehicles book more. Vehicles
 #   above $150/day average only ~4.5 reservations vs ~6.4 overall.
-# - `recommended_price`: no visible pattern on its own, confirming the near-zero
-#   correlation. The recommended price only matters relative to the actual price.
+# - `recommended_price`: no visible pattern on its own. The recommended price
+#   only seems to matter relative to the actual price.
 # - `num_images`: clear monotonic increase — mean reservations goes from ~5 (1 photo)
 #   to ~8 (5 photos). More photos consistently means more bookings.
-# - `description`: nearly flat across all length bins (~6.2–6.7 mean). The near-zero
-#   correlation is confirmed — description length alone doesn't predict reservations
-#   linearly. However, the model may still find non-linear splits useful.
+# - `description`: nearly flat across all length bins (~6.2–6.7 mean). Description
+#   length alone doesn't predict reservations linearly. However, the model may
+#   still find non-linear splits useful.
 
 # %% [markdown]
-# ### 5.6 Price Analysis
+# ### 5.5 Reservations Over Time
 #
-# The correlation matrix suggests pricing relative to market matters more than
-# absolute price. Let's create two derived features and plot them against
-# reservations to confirm.
+# Is there seasonality or a trend in the reservation data?
+
+# %%
+reservations_ts = reservations.set_index("created_at").resample("W").size()
+
+fig, ax = plt.subplots(figsize=(14, 4))
+reservations_ts.plot(ax=ax)
+ax.set_ylabel("Reservations per Week")
+ax.set_title("Reservation Volume Over Time")
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# **Observations:**
+# - Reservation volume is relatively stable over time — no strong seasonality
+# - Slight variations week to week but no structural trend
+# - This means we can treat the data as a single cross-section without worrying
+#   about temporal effects (no need for time-series features or train/test split by date)
+
+# %% [markdown]
+# ### 5.6 Correlation Matrix
+#
+# Now that we've visually inspected every feature, let's quantify the linear
+# relationships. This heatmap shows Pearson correlations between all raw
+# features and the target. It won't capture the non-linear effects we saw
+# (e.g., `description`), but it confirms the linear signals and highlights
+# which pairs of features are collinear.
+
+# %%
+corr = df[feature_cols + ["num_reservations"]].corr()
+
+fig, ax = plt.subplots(figsize=(8, 6))
+sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", center=0, ax=ax)
+ax.set_title("Correlation Matrix")
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# **Observations:**
+# - `actual_price` has a moderate negative correlation with reservations (-0.26),
+#   consistent with the downward trend we saw in section 5.4
+# - `num_images` is the strongest positive correlation (+0.22), confirming the
+#   monotonic increase visible in the scatter plot
+# - `technology` has a mild positive effect (+0.14) — the box plots (5.3) showed
+#   a +28% lift in means, but much of that spread overlaps
+# - `description` and `street_parked` are near zero — no linear relationship.
+#   For `description` this is misleading: the scatter plot showed no linear trend,
+#   but the model may still find non-linear splits
+# - `recommended_price` alone is almost uncorrelated with reservations (-0.01),
+#   yet it is correlated with `actual_price` (0.17). This hints that the *gap*
+#   between what an owner charges and what the market recommends may be more
+#   informative than either price alone — we explore this next
+
+# %% [markdown]
+# ### 5.7 Price Analysis — Engineering Relative Pricing Features
+#
+# The previous sections revealed that `recommended_price` alone has almost no
+# linear relationship with reservations, yet `actual_price` does. On a
+# peer-to-peer marketplace like Turo, guests comparison-shop across similar
+# vehicles in the same area. The platform's `recommended_price` serves as a
+# proxy for the local market rate. A vehicle priced well below this
+# recommendation looks like a bargain, while one priced far above looks
+# overpriced — regardless of the absolute dollar amount.
+#
+# This motivates two derived features:
+#
+# - **`price_diff`** (`actual_price − recommended_price`): the dollar gap from
+#   market. Negative means underpriced, positive means overpriced. Directly
+#   interpretable ("$20 below market").
+# - **`price_ratio`** (`actual_price / recommended_price`): the multiplicative
+#   gap. Useful when the market rate varies — a $20 gap means different things
+#   for a $40/day economy car vs. a $200/day luxury vehicle.
+#
+# We engineer both and let the data tell us which (if either) is redundant.
 
 # %%
 df["price_diff"] = df["actual_price"] - df["recommended_price"]
@@ -315,32 +359,32 @@ plt.show()
 #   capture the "bargain effect" that dominates booking decisions.
 
 # %% [markdown]
-# ### 5.7 Reservations Over Time
-#
-# Is there seasonality or a trend in the reservation data?
-
-# %%
-reservations_ts = reservations.set_index("created_at").resample("W").size()
-
-fig, ax = plt.subplots(figsize=(14, 4))
-reservations_ts.plot(ax=ax)
-ax.set_ylabel("Reservations per Week")
-ax.set_title("Reservation Volume Over Time")
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# **Observations:**
-# - Reservation volume is relatively stable over time — no strong seasonality
-# - Slight variations week to week but no structural trend
-# - This means we can treat the data as a single cross-section without worrying
-#   about temporal effects (no need for time-series features or train/test split by date)
-
-# %% [markdown]
 # ## 6. Feature Importance — Model Training with MLflow
 #
-# We train two tree-based models to predict `num_reservations` and compare
-# their feature importances. Both models use all 8 features (6 raw + 2 derived).
+# **Why tree-based models?** The EDA revealed non-linear relationships (e.g.,
+# `description` has near-zero linear correlation with reservations yet shows
+# clear non-linear signal in the scatter plot). Tree models handle this
+# natively without manual feature transformations. They also work seamlessly
+# with our mix of binary and continuous features — no scaling or encoding
+# needed — and provide built-in feature importance scores, which is exactly
+# what we need to answer the project question: *which factors drive
+# reservations?*
+#
+# **Why Random Forest *and* Gradient Boosting?** These two represent the main
+# ensemble strategies — **bagging** and **boosting** — and they have different
+# failure modes:
+#
+# - **Random Forest** averages many deep, independent trees. It captures
+#   complex interactions well but can spread importance across correlated
+#   features (over-crediting redundant inputs).
+# - **Gradient Boosting** builds shallow trees sequentially, each correcting
+#   the residuals of the last. It tends to concentrate importance on the
+#   strongest signals first.
+#
+# If both models agree on which features matter, we can be confident the
+# signal is real and not an artifact of one particular learning strategy.
+# Where they disagree, the difference tells us something about the nature of
+# the relationship (linear vs. non-linear, redundant vs. complementary).
 #
 # All runs are logged to MLflow for experiment tracking.
 # View them at: http://localhost:5001

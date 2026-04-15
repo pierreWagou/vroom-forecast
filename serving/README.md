@@ -4,6 +4,27 @@ Ray Serve prediction service for vroom-forecast. FastAPI ingress with
 Ray Serve deployments for model inference, feature computation, and
 online store lookup.
 
+## Why Ray Serve?
+
+The serving layer does more than load-a-model-and-predict. It computes
+features on the fly, looks up pre-materialized features from Redis, reads
+from the Parquet offline store, runs inference, and listens for model
+promotion events — all behind a single HTTP API. Ray Serve was chosen
+because it maps naturally to this multi-concern architecture:
+
+| Reason | Detail |
+|--------|--------|
+| **Deployment composition** | Each concern (feature compute, online lookup, inference) is a separate Ray Serve deployment, independently scalable. Plain FastAPI would put everything in one process. |
+| **Hot model reload** | Deployments are long-lived actors. `Predictor.reload()` swaps the model in-place without restarting the server or dropping requests — triggered by Redis pub/sub on promotion. |
+| **FastAPI integration** | `@serve.ingress(app)` gives full FastAPI capabilities (OpenAPI docs, Pydantic validation) while Ray handles replicas and routing. No tradeoff between DX and scalability. |
+| **Stack alignment** | Ray is listed as high-priority in Turo's tech stack. Using it here demonstrates familiarity with the tool in a realistic serving context. |
+
+**Tradeoff acknowledged:** Ray Serve adds operational complexity (a Ray
+cluster) and a heavier dependency footprint vs. plain FastAPI + Gunicorn.
+At this project's scale, plain FastAPI would suffice. The choice is
+pragmatic — it demonstrates the production pattern while remaining fully
+functional locally via `ray start --head`.
+
 ## Architecture
 
 ```mermaid
