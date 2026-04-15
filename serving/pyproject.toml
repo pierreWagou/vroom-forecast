@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "Ray Serve prediction service for vroom-forecast"
 requires-python = ">=3.12"
 dependencies = [
-    "ray[serve]>=2.44",
+    "ray[serve]>=2.44,<2.45",
     "fastapi>=0.115",
     "pydantic-settings>=2.7",
     "mlflow>=2.21",

@@ -83,6 +83,7 @@ services:
     build:
       context: .
       dockerfile: serving/Dockerfile
+    shm_size: '3gb'
     depends_on:
       mlflow:
         condition: service_healthy

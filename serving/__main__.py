@@ -24,7 +24,7 @@ def main() -> None:
         dashboard_host="0.0.0.0",
     )
 
-    # Configure HTTP
+    # Configure HTTP proxy before deploying
     serve.start(http_options={"host": settings.host, "port": settings.port})
 
     # Compose Serve deployments
