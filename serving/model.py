@@ -474,18 +474,21 @@ class FeatureMaterializer:
         df = pd.DataFrame([{**raw, "vehicle_id": vehicle_id}])
         df = engineer_features(df)
 
-        row = {
-            "vehicle_id": vehicle_id,
-            "technology": df.iloc[0]["technology"],
-            "num_images": df.iloc[0]["num_images"],
-            "street_parked": df.iloc[0]["street_parked"],
-            "description": df.iloc[0]["description"],
-            "price_diff": df.iloc[0]["price_diff"],
-            "num_reservations": pd.NA,
-            "event_timestamp": pd.Timestamp(datetime.now(tz=UTC)),
-        }
-
-        write_df = pd.DataFrame([row])
+        # Build write_df with correct Feast-compatible dtypes.
+        # Avoid df.iloc[0][col] which returns a row Series and upcasts int→float.
+        # Use df[col].iloc[0] to preserve per-column dtype (int64/float64).
+        write_df = pd.DataFrame(
+            {
+                "vehicle_id": pd.array([vehicle_id], dtype="int64"),
+                "technology": pd.array([int(df["technology"].iloc[0])], dtype="int64"),
+                "num_images": pd.array([int(df["num_images"].iloc[0])], dtype="int64"),
+                "street_parked": pd.array([int(df["street_parked"].iloc[0])], dtype="int64"),
+                "description": pd.array([int(df["description"].iloc[0])], dtype="int64"),
+                "price_diff": pd.array([float(df["price_diff"].iloc[0])], dtype="float64"),
+                "num_reservations": pd.array([pd.NA], dtype="Int64"),
+                "event_timestamp": [pd.Timestamp(datetime.now(tz=UTC))],
+            }
+        )
         self._store.write_to_online_store("vehicle_features", write_df)
         logger.info("FeatureMaterializer: Materialized vehicle #%d", vehicle_id)
 
