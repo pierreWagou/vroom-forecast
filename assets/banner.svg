@@ -52,10 +52,6 @@
     <clipPath id="sunClip">
       <rect x="300" y="50" width="200" height="72"/>
     </clipPath>
-    <!-- Clip scan lines to sun circle -->
-    <clipPath id="scanClip">
-      <circle cx="400" cy="122" r="48"/>
-    </clipPath>
   </defs>
 
   <!-- Sky -->
@@ -84,16 +80,6 @@
 
   <!-- Setting sun -->
   <circle cx="400" cy="122" r="48" fill="url(#sun)" opacity="0.9" clip-path="url(#sunClip)"/>
-  <!-- Retro scan lines across sun (clipped to circle) -->
-  <g clip-path="url(#scanClip)" opacity="0.4">
-    <rect x="352" y="78" width="96" height="2.5" fill="#1a0a2e"/>
-    <rect x="352" y="85" width="96" height="2.5" fill="#1a0a2e"/>
-    <rect x="352" y="92" width="96" height="3" fill="#1a0a2e"/>
-    <rect x="352" y="100" width="96" height="3.5" fill="#1a0a2e"/>
-    <rect x="352" y="109" width="96" height="4" fill="#1a0a2e"/>
-    <rect x="352" y="118" width="96" height="5" fill="#1a0a2e"/>
-  </g>
-
   <!-- Horizon line -->
   <line x1="0" y1="122" x2="800" y2="122" stroke="#ff6ec7" stroke-width="1.5" opacity="0.8" filter="url(#glow)"/>
 
