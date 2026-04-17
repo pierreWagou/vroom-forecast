@@ -169,11 +169,3 @@ class TriggerDagResponse(BaseModel):
     status: str
     dag_id: str
     dag_run_id: str | None = None
-
-
-class DagRunStatus(BaseModel):
-    """Status of an Airflow DAG run."""
-
-    dag_id: str
-    dag_run_id: str
-    state: str  # queued, running, success, failed

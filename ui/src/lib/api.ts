@@ -268,12 +268,6 @@ export interface TriggerDagResponse {
   dag_run_id: string | null;
 }
 
-export interface DagRunStatus {
-  dag_id: string;
-  dag_run_id: string;
-  state: "queued" | "running" | "success" | "failed" | string;
-}
-
 /** Trigger the Airflow materialization pipeline via the serving API. */
 export async function triggerMaterialize(): Promise<TriggerDagResponse> {
   const res = await fetchWithTimeout(`${API_URL}/materialize`, { method: "POST" });
@@ -291,16 +285,5 @@ export async function triggerTraining(): Promise<TriggerDagResponse> {
     const body = await res.json().catch(() => null);
     throw new Error(body?.detail ?? `Failed to trigger training: ${res.statusText}`);
   }
-  return res.json();
-}
-
-/** Poll the status of an Airflow DAG run. */
-export async function fetchDagRunStatus(dagId: string, dagRunId: string): Promise<DagRunStatus> {
-  const res = await fetchWithTimeout(
-    `${API_URL}/pipelines/${dagId}/${encodeURIComponent(dagRunId)}`,
-    undefined,
-    5_000,
-  );
-  if (!res.ok) throw new Error(`Failed to fetch DAG run status: ${res.statusText}`);
   return res.json();
 }

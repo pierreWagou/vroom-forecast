@@ -32,9 +32,9 @@ when the serving container is running.
 | `GET` | `/model` | Champion model metadata (version, metrics, feature importances) |
 | `POST` | `/materialize` | Trigger the Airflow materialization pipeline |
 | `POST` | `/train` | Trigger the end-to-end ML pipeline (training + promotion) |
-| `GET` | `/pipelines/{dag_id}/{dag_run_id}` | Poll Airflow DAG run status |
 | `GET` | `/events` | SSE stream for model promotion events |
 | `GET` | `/vehicles/events` | SSE stream for vehicle materialization events |
+| `GET` | `/pipelines/events` | SSE stream for Airflow DAG completion events |
 
 ## Schemas
 

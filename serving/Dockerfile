@@ -24,5 +24,9 @@ ENV PATH="/app/serving/.venv/bin:$PATH"
 # MemoryHandler's target is None during controller recovery, crashing
 # on handler.target.baseFilename.
 ENV RAY_SERVE_LOG_TO_STDERR=1
+# Prevent Ray from auto-detecting system memory and allocating too much
+# for the object store / plasma, which OOM-kills workers on constrained
+# Docker hosts (e.g., laptop with many containers sharing ~8 GB).
+ENV RAY_OBJECT_STORE_MEMORY=200000000
 
 CMD ["python", "-m", "serving"]

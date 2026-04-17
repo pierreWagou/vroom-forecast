@@ -1,6 +1,8 @@
 """Run the serving API via Ray Serve: python -m serving."""
 
+import shutil
 import time
+from pathlib import Path
 
 import ray
 from ray import serve
@@ -19,8 +21,17 @@ from serving.model import (
 
 def main() -> None:
     """Initialize Ray, compose Serve deployments, and start background actors."""
+    # Clean up stale Ray state from previous container runs.
+    # Without this, a restarted container may fail to start the ProxyActor
+    # because /tmp/ray holds sockets and state from the dead process.
+    ray_tmp = Path("/tmp/ray")
+    if ray_tmp.exists():
+        shutil.rmtree(ray_tmp, ignore_errors=True)
+
     ray.init(
-        ignore_reinit_error=True,
+        # Cap the object store — Ray defaults to 30% of system memory which
+        # can OOM-kill workers on memory-constrained Docker hosts.
+        object_store_memory=200 * 1024 * 1024,  # 200 MB
         dashboard_host="0.0.0.0",
     )
 

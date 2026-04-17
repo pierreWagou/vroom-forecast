@@ -23,6 +23,7 @@ VEHICLE_SAVED_CHANNEL = "vroom-forecast:vehicle-saved"
 VEHICLE_MATERIALIZED_CHANNEL = "vroom-forecast:vehicle-materialized"
 MODEL_PROMOTED_CHANNEL = "vroom-forecast:model-promoted"
 MODEL_LOADED_CHANNEL = "vroom-forecast:model-loaded"
+PIPELINE_COMPLETED_CHANNEL = "vroom-forecast:pipeline-completed"
 
 # Feature references for Feast online store lookup
 _ONLINE_FEATURE_REFS = [
@@ -34,7 +35,7 @@ _ONLINE_FEATURE_REFS = [
 ]
 
 
-@serve.deployment(max_ongoing_requests=10)
+@serve.deployment(max_ongoing_requests=10, ray_actor_options={"num_cpus": 0})
 class Predictor:
     """Loads the champion model from MLflow and runs inference.
 
@@ -203,7 +204,7 @@ class Predictor:
         return self.model_info
 
 
-@serve.deployment(max_ongoing_requests=10)
+@serve.deployment(max_ongoing_requests=10, ray_actor_options={"num_cpus": 0})
 class FeatureComputer:
     """Computes derived features from raw vehicle attributes.
 
@@ -228,7 +229,7 @@ class FeatureComputer:
         return latencies
 
 
-@serve.deployment(max_ongoing_requests=10)
+@serve.deployment(max_ongoing_requests=10, ray_actor_options={"num_cpus": 0})
 class FeatureLookup:
     """Looks up pre-computed features from the Feast online store (Redis).
 
@@ -317,7 +318,7 @@ class FeatureLookup:
             return None
 
 
-@serve.deployment
+@serve.deployment(ray_actor_options={"num_cpus": 0})
 class OfflineFeatureReader:
     """Reads pre-computed features from the Feast offline store (Parquet).
 
@@ -370,7 +371,7 @@ class OfflineFeatureReader:
         return self._df is not None
 
 
-@ray.remote
+@ray.remote(num_cpus=0)
 class ModelReloadListener:
     """Ray actor that subscribes to Redis pub/sub and reloads the Predictor
     when a model promotion event is received.
@@ -398,9 +399,17 @@ class ModelReloadListener:
 
         import redis
 
-        r = redis.from_url(settings.redis_url)
-        pubsub = r.pubsub()
-        pubsub.subscribe(MODEL_PROMOTED_CHANNEL)
+        try:
+            r = redis.from_url(settings.redis_url)
+            pubsub = r.pubsub()
+            pubsub.subscribe(MODEL_PROMOTED_CHANNEL)
+        except Exception:
+            logger.exception(
+                "ModelReloadListener: Failed to connect to Redis — "
+                "actor will exit. Promotion events will not trigger reloads."
+            )
+            return
+
         logger.info("ModelReloadListener: Subscribed to '%s'.", MODEL_PROMOTED_CHANNEL)
 
         for message in pubsub.listen():
@@ -414,7 +423,7 @@ class ModelReloadListener:
                 logger.error("ModelReloadListener: Reload failed: %s", e)
 
 
-@ray.remote
+@ray.remote(num_cpus=0)
 class FeatureMaterializer:
     """Ray actor that subscribes to Redis pub/sub and materializes features
     to the Feast online store in real time.
@@ -430,7 +439,12 @@ class FeatureMaterializer:
         self._init_feast()
 
     def _init_feast(self) -> None:
-        """Set up the Feast feature store and apply entity/view definitions."""
+        """Set up the Feast feature store and apply entity/view definitions.
+
+        Errors are logged but not raised — the actor stays alive so it can
+        still consume Redis events (and log warnings) rather than crashing
+        the entire Ray worker process.
+        """
         if settings.feast_repo is None:
             logger.info("FeatureMaterializer: no Feast repo configured — disabled.")
             return
@@ -446,21 +460,27 @@ class FeatureMaterializer:
             )
             return
 
-        # Add the feast repo parent to sys.path so definitions.py can be imported
-        sys.path.insert(0, str(repo_path.parent))
+        try:
+            # Add the feast repo parent to sys.path so definitions.py can be imported
+            sys.path.insert(0, str(repo_path.parent))
 
-        from feast import FeatureStore
-        from feature_repo.definitions import (
-            vehicle,
-            vehicle_features_source,
-            vehicle_features_view,
-        )
+            from feast import FeatureStore
+            from feature_repo.definitions import (
+                vehicle,
+                vehicle_features_source,
+                vehicle_features_view,
+            )
 
-        self._store = FeatureStore(repo_path=settings.feast_repo)
-        self._store.apply(
-            [vehicle, vehicle_features_source, vehicle_features_view]  # type: ignore[list-item]
-        )
-        logger.info("FeatureMaterializer: Feast store initialized.")
+            self._store = FeatureStore(repo_path=settings.feast_repo)
+            self._store.apply(
+                [vehicle, vehicle_features_source, vehicle_features_view]  # type: ignore[list-item]
+            )
+            logger.info("FeatureMaterializer: Feast store initialized.")
+        except Exception:
+            logger.exception(
+                "FeatureMaterializer: Failed to initialize Feast store — "
+                "actor will stay alive but materialization is disabled."
+            )
 
     def _compute_and_write(self, vehicle_id: int, raw: dict) -> None:
         """Compute derived features and write to the Feast online store."""
@@ -516,9 +536,17 @@ class FeatureMaterializer:
 
         import redis
 
-        r = redis.from_url(settings.redis_url)
-        pubsub = r.pubsub()
-        pubsub.subscribe(VEHICLE_SAVED_CHANNEL)
+        try:
+            r = redis.from_url(settings.redis_url)
+            pubsub = r.pubsub()
+            pubsub.subscribe(VEHICLE_SAVED_CHANNEL)
+        except Exception:
+            logger.exception(
+                "FeatureMaterializer: Failed to connect to Redis — "
+                "actor will exit. Vehicle-saved events will not be processed."
+            )
+            return
+
         logger.info("FeatureMaterializer: Subscribed to '%s'.", VEHICLE_SAVED_CHANNEL)
 
         for message in pubsub.listen():

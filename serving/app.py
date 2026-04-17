@@ -27,7 +27,6 @@ from serving.schemas import (
     BenchmarkRequest,
     BenchmarkResponse,
     ComputedFeatures,
-    DagRunStatus,
     DeleteVehicleResponse,
     FeatureViewInfo,
     HealthResponse,
@@ -57,7 +56,7 @@ app.add_middleware(
 )
 
 
-@serve.deployment(max_ongoing_requests=100)
+@serve.deployment(max_ongoing_requests=100, ray_actor_options={"num_cpus": 0})
 @serve.ingress(app)
 class VroomForecastApp:
     """Ray Serve ingress — holds handles to all downstream deployments."""
@@ -157,37 +156,6 @@ class VroomForecastApp:
             status="triggered",
             dag_id=dag_id,
             dag_run_id=body.get("dag_run_id"),
-        )
-
-    @app.get(
-        "/pipelines/{dag_id}/{dag_run_id:path}",
-        response_model=DagRunStatus,
-    )
-    async def get_dag_run_status(self, dag_id: str, dag_run_id: str) -> DagRunStatus:
-        """Poll the status of an Airflow DAG run."""
-        import httpx
-
-        if not settings.airflow_url:
-            raise HTTPException(status_code=503, detail="Airflow URL not configured")
-
-        async with httpx.AsyncClient() as client:
-            res = await client.get(
-                f"{settings.airflow_url}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}",
-                auth=("admin", "admin"),
-                timeout=10,
-            )
-
-        if res.status_code >= 400:
-            raise HTTPException(
-                status_code=res.status_code,
-                detail=f"DAG run not found: {dag_id}/{dag_run_id}",
-            )
-
-        body = res.json()
-        return DagRunStatus(
-            dag_id=dag_id,
-            dag_run_id=dag_run_id,
-            state=body.get("state", "unknown"),
         )
 
     @app.get("/stores", response_model=StoreInfoResponse)
@@ -364,6 +332,58 @@ class VroomForecastApp:
                         event_data = {
                             "type": "vehicle-materialized",
                             "vehicle_id": data.get("vehicle_id"),
+                        }
+                        yield f"data: {json.dumps(event_data)}\n\n"
+                    else:
+                        yield ": keepalive\n\n"
+                    await asyncio.sleep(0.1)
+            finally:
+                await pubsub.close()
+                await r.close()
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.get("/pipelines/events")
+    async def pipeline_events(self) -> StreamingResponse:
+        """SSE endpoint — streams pipeline-completed events from Redis pub/sub.
+
+        Airflow DAGs publish to the ``pipeline-completed`` channel when a
+        DAG run reaches a terminal state (success or failure). This replaces
+        the old client-side polling of ``GET /pipelines/{dag_id}/{dag_run_id}``.
+        """
+
+        async def event_stream() -> AsyncGenerator[str, None]:
+            import redis.asyncio as aioredis
+
+            if settings.redis_url is None:
+                while True:
+                    await asyncio.sleep(60)
+                return
+
+            r = aioredis.from_url(settings.redis_url)
+            pubsub = r.pubsub()
+            from serving.model import PIPELINE_COMPLETED_CHANNEL
+
+            await pubsub.subscribe(PIPELINE_COMPLETED_CHANNEL)
+
+            try:
+                while True:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    if message and message["type"] == "message":
+                        data = json.loads(message["data"])
+                        event_data = {
+                            "type": "pipeline-completed",
+                            "dag_id": data.get("dag_id"),
+                            "dag_run_id": data.get("dag_run_id"),
+                            "state": data.get("state"),
                         }
                         yield f"data: {json.dumps(event_data)}\n\n"
                     else:

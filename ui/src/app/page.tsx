@@ -56,7 +56,6 @@ import {
   fetchModelInfo,
   triggerMaterialize,
   triggerTraining,
-  fetchDagRunStatus,
   API_URL,
   type VehicleFeatures,
   type PredictionResponse,
@@ -447,65 +446,34 @@ export default function Home() {
     }
   };
 
-  /** Poll an Airflow DAG run until it completes. Returns final state. */
-  const pollDagRun = async (dagId: string, dagRunId: string): Promise<"success" | "failed"> => {
-    const poll = () =>
-      new Promise<"success" | "failed">((resolve) => {
-        const interval = setInterval(async () => {
-          try {
-            const status = await fetchDagRunStatus(dagId, dagRunId);
-            if (status.state === "success" || status.state === "failed") {
-              clearInterval(interval);
-              resolve(status.state as "success" | "failed");
-            }
-          } catch {
-            clearInterval(interval);
-            resolve("failed");
-          }
-        }, 3000);
-      });
-    return poll();
-  };
-
-  /** Trigger the Airflow materialize pipeline and poll until done. */
+  /** Trigger the Airflow materialize pipeline.
+   *  Completion is handled by the /pipelines/events SSE stream below.
+   */
   const handleMaterialize = async () => {
     setMaterializing("running");
     setError(null);
     try {
-      const resp = await triggerMaterialize();
-      if (!resp.dag_run_id) throw new Error("No dag_run_id returned");
-      const result = await pollDagRun(resp.dag_id, resp.dag_run_id);
-      setMaterializing(result);
-      // Refresh data on success
-      if (result === "success") {
-        fetchStoreInfo().then(setStoreInfo).catch(() => {});
-        refreshVehicles();
-      }
+      await triggerMaterialize();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to trigger materialization");
       setMaterializing("failed");
+      setTimeout(() => setMaterializing("idle"), 3000);
     }
-    // Reset to idle after 3s so the button returns to normal
-    setTimeout(() => setMaterializing("idle"), 3000);
   };
 
-  /** Trigger the Airflow training + promotion pipeline and poll until done. */
+  /** Trigger the Airflow training + promotion pipeline.
+   *  Completion is handled by the /pipelines/events SSE stream below.
+   */
   const handleTrain = async () => {
     setTraining("running");
     setError(null);
     try {
-      const resp = await triggerTraining();
-      if (!resp.dag_run_id) throw new Error("No dag_run_id returned");
-      const result = await pollDagRun(resp.dag_id, resp.dag_run_id);
-      setTraining(result);
-      if (result === "success") {
-        fetchModelInfo().then(setModelInfo);
-      }
+      await triggerTraining();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to trigger training");
       setTraining("failed");
+      setTimeout(() => setTraining("idle"), 3000);
     }
-    setTimeout(() => setTraining("idle"), 3000);
   };
 
   useEffect(() => {
@@ -550,6 +518,56 @@ export default function Home() {
       if (retryTimeout) clearTimeout(retryTimeout);
     };
   }, [mounted]);
+
+  // SSE: persistent connection for pipeline-completed events.
+  // Airflow DAGs publish to Redis when a DAG run reaches a terminal state
+  // (success or failure). This replaces the old setInterval-based polling.
+  useEffect(() => {
+    if (!mounted) return;
+
+    let es: EventSource | null = null;
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      es = new EventSource(`${API_URL}/pipelines/events`);
+
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "pipeline-completed") {
+            const state = data.state === "success" ? "success" : "failed";
+            if (data.dag_id === "vroom_forecast_materialize") {
+              setMaterializing(state);
+              if (state === "success") {
+                fetchStoreInfo().then(setStoreInfo).catch(() => {});
+                refreshVehicles();
+              }
+              setTimeout(() => setMaterializing("idle"), 3000);
+            } else if (data.dag_id === "vroom_forecast_pipeline") {
+              setTraining(state);
+              if (state === "success") {
+                fetchModelInfo().then(setModelInfo);
+              }
+              setTimeout(() => setTraining("idle"), 3000);
+            }
+          }
+        } catch {
+          // Ignore parse errors (keepalive comments etc.)
+        }
+      };
+
+      es.onerror = () => {
+        es?.close();
+        retryTimeout = setTimeout(connect, 5000);
+      };
+    };
+
+    connect();
+    return () => {
+      es?.close();
+      if (retryTimeout) clearTimeout(retryTimeout);
+    };
+  }, [mounted, refreshVehicles]);
 
   // Auto-pick first materialized vehicle for the online store benchmark
   useEffect(() => {
