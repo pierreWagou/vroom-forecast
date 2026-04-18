@@ -1,6 +1,6 @@
 <div align="center">
 
-![Vroom Forecast](assets/banner.svg)
+![header](https://capsule-render.vercel.app/api?type=waving&height=220&color=0:cba6f7,25:b4befe,50:89dceb,75:f5c2e7,100:f38ba8&text=Vroom%20Forecast&fontSize=60&fontColor=11111b&desc=ML%20pipeline%20go%20vroom&descSize=18&descAlignY=62&descAlign=50&fontAlignY=38&animation=fadeIn&fontAlign=50)
 
 [![CI](https://github.com/pierreWagou/vroom-forecast/actions/workflows/ci.yml/badge.svg)](https://github.com/pierreWagou/vroom-forecast/actions/workflows/ci.yml)
 [![CD](https://github.com/pierreWagou/vroom-forecast/actions/workflows/cd-docs.yml/badge.svg)](https://github.com/pierreWagou/vroom-forecast/actions/workflows/cd-docs.yml)
