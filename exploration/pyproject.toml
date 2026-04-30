@@ -11,5 +11,5 @@ dependencies = [
     "seaborn>=0.13",
     "ipykernel>=7.2",
     "jupytext>=1.19",
-    "notebook>=7.5",
+    "notebook>=7.5.6",
 ]
